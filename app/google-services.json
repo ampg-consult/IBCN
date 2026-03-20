@@ -1,0 +1,269 @@
+{
+  "project_info": {
+    "project_number": "819001601547",
+    "project_id": "ampg--consult",
+    "storage_bucket": "ampg--consult.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:819001601547:android:0f0cafd8e5f1192136e10e",
+        "android_client_info": {
+          "package_name": "com.ampgconsult.ampg_consult"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "819001601547-s2jkg7hprcgjvd91koncqfgnmvgks95e.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.ampgconsult.ampg_consult",
+            "certificate_hash": "ca5becac4d8fc87e7e48abe1ad2dabe209971d79"
+          }
+        },
+        {
+          "client_id": "819001601547-h8l218ni9r0hedn1aoac0pgma7ou0pss.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBYSr5J1PbjU9XzXAaRQfmnZHdEQoerbmM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "819001601547-h8l218ni9r0hedn1aoac0pgma7ou0pss.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:819001601547:android:4f13d61c9e42d82036e10e",
+        "android_client_info": {
+          "package_name": "com.ampgconsult.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "819001601547-ilplvn0c42ro4poh1v9ioakus21m1iqb.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.ampgconsult.app",
+            "certificate_hash": "ca5becac4d8fc87e7e48abe1ad2dabe209971d79"
+          }
+        },
+        {
+          "client_id": "819001601547-h8l218ni9r0hedn1aoac0pgma7ou0pss.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBYSr5J1PbjU9XzXAaRQfmnZHdEQoerbmM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "819001601547-h8l218ni9r0hedn1aoac0pgma7ou0pss.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:819001601547:android:d9ddb87251911d4836e10e",
+        "android_client_info": {
+          "package_name": "com.ampgconsult.dargladtalenthunts"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "819001601547-o40i91lpojdg6fdim3aorvmm4fcpuq56.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.ampgconsult.dargladtalenthunts",
+            "certificate_hash": "ca5becac4d8fc87e7e48abe1ad2dabe209971d79"
+          }
+        },
+        {
+          "client_id": "819001601547-h8l218ni9r0hedn1aoac0pgma7ou0pss.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBYSr5J1PbjU9XzXAaRQfmnZHdEQoerbmM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "819001601547-h8l218ni9r0hedn1aoac0pgma7ou0pss.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:819001601547:android:5e29ad8031787af636e10e",
+        "android_client_info": {
+          "package_name": "com.ampgconsult.flashchallenges"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "819001601547-02fhunlai2vkqeh1k15tdgub7t6g2bss.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.ampgconsult.flashchallenges",
+            "certificate_hash": "ca5becac4d8fc87e7e48abe1ad2dabe209971d79"
+          }
+        },
+        {
+          "client_id": "819001601547-h8l218ni9r0hedn1aoac0pgma7ou0pss.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBYSr5J1PbjU9XzXAaRQfmnZHdEQoerbmM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "819001601547-h8l218ni9r0hedn1aoac0pgma7ou0pss.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:819001601547:android:d77a5612285f076636e10e",
+        "android_client_info": {
+          "package_name": "com.ampgconsult.ibcn"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "819001601547-269rvkna16bj55f4tio1764mck6pgcjq.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.ampgconsult.ibcn",
+            "certificate_hash": "ca5becac4d8fc87e7e48abe1ad2dabe209971d79"
+          }
+        },
+        {
+          "client_id": "819001601547-h8l218ni9r0hedn1aoac0pgma7ou0pss.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBYSr5J1PbjU9XzXAaRQfmnZHdEQoerbmM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "819001601547-h8l218ni9r0hedn1aoac0pgma7ou0pss.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:819001601547:android:01ddf744582f602336e10e",
+        "android_client_info": {
+          "package_name": "com.ampgconsult.skillbridgeafrica"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "819001601547-k8fkd1s38u4jk9rasjsp2kod1eacgni3.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.ampgconsult.skillbridgeafrica",
+            "certificate_hash": "ca5becac4d8fc87e7e48abe1ad2dabe209971d79"
+          }
+        },
+        {
+          "client_id": "819001601547-h8l218ni9r0hedn1aoac0pgma7ou0pss.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBYSr5J1PbjU9XzXAaRQfmnZHdEQoerbmM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "819001601547-h8l218ni9r0hedn1aoac0pgma7ou0pss.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:819001601547:android:53583e5fce8fd5af36e10e",
+        "android_client_info": {
+          "package_name": "com.ampgconsult.unitychat"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "819001601547-q17t60h2r8tp9p8g2j13qlmjgnmtqdr7.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.ampgconsult.unitychat",
+            "certificate_hash": "ca5becac4d8fc87e7e48abe1ad2dabe209971d79"
+          }
+        },
+        {
+          "client_id": "819001601547-h8l218ni9r0hedn1aoac0pgma7ou0pss.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBYSr5J1PbjU9XzXAaRQfmnZHdEQoerbmM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "819001601547-h8l218ni9r0hedn1aoac0pgma7ou0pss.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

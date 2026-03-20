@@ -1,0 +1,59 @@
+{
+  "version": "1.0.0",
+  "collections": {
+    "users": {
+      "id": "UUID",
+      "username": "String",
+      "email": "String",
+      "profile_picture": "URL",
+      "reputation_score": "Float",
+      "roles": ["Creator", "Developer", "Investor"],
+      "created_at": "Timestamp"
+    },
+    "projects": {
+      "id": "UUID",
+      "owner_id": "UUID",
+      "name": "String",
+      "description": "Text",
+      "status": "Enum(DRAFT, ACTIVE, BUILDING, LAUNCHED)",
+      "collaborators": [
+        {
+          "user_id": "UUID",
+          "role": "Enum(VIEWER, EDITOR, ADMIN)"
+        }
+      ],
+      "ai_agents_assigned": ["Architect", "Developer", "Designer"],
+      "tech_stack": ["Flutter", "FastAPI", "MongoDB"],
+      "version_history": ["UUID"],
+      "created_at": "Timestamp",
+      "updated_at": "Timestamp"
+    },
+    "versions": {
+      "id": "UUID",
+      "project_id": "UUID",
+      "author_id": "UUID",
+      "version_tag": "String (e.g., v1.0.1)",
+      "commit_message": "String",
+      "files_delta": "JSON (Diff data)",
+      "is_ai_generated": "Boolean",
+      "timestamp": "Timestamp"
+    },
+    "marketplace_items": {
+      "id": "UUID",
+      "title": "String",
+      "type": "Enum(TEMPLATE, PLUGIN, AI_MODEL, WORKFLOW)",
+      "price": "Decimal",
+      "creator_id": "UUID",
+      "rating": "Float",
+      "download_count": "Integer"
+    },
+    "analytics_events": {
+      "id": "UUID",
+      "user_id": "UUID",
+      "project_id": "UUID",
+      "event_type": "String",
+      "metadata": "JSON",
+      "timestamp": "Timestamp"
+    }
+  }
+}

@@ -6,6 +6,11 @@ const path = require('path');
 const app = express();
 app.use(express.json({ limit: '100mb' }));
 
+// Friendly Landing Page / Health Check
+app.get('/', (req, res) => {
+    res.status(200).send('<h1>IBCN Deploy Engine is Online</h1><p>Send a POST request to <code>/build</code> to trigger a deployment.</p>');
+});
+
 app.post('/build', async (req, res) => {
     const { projectId, files } = req.body;
     if (!projectId || !files) {
@@ -35,7 +40,8 @@ app.post('/build', async (req, res) => {
         res.status(200).json({
             success: true,
             buildId: Date.now().toString(),
-            message: "Build successful"
+            message: "Build successful",
+            url: `https://ibcn.site/apps/${projectId}`
         });
 
     } catch (error) {

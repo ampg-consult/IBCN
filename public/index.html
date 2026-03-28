@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>IBCN - Intelligent Builder Collaboration Network</title>
+    <style>
+      body { background: #f4f7f6; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+      .container { text-align: center; background: white; padding: 3rem; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); max-width: 500px; }
+      h1 { color: #2c3e50; margin-bottom: 1rem; }
+      p { color: #7f8c8d; line-height: 1.6; }
+      .loader { border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; width: 30px; height: 30px; animation: spin 2s linear infinite; display: none; margin: 20px auto; }
+      @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+      .btn { display: inline-block; background: #3498db; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600; margin-top: 1rem; transition: background 0.3s; }
+      .btn:hover { background: #2980b9; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div id="content">
+        <h1>IBCN Platform</h1>
+        <p>The Intelligent Builder Collaboration Network is live.</p>
+        <p>Use the mobile app to build and deploy your SaaS products instantly.</p>
+        <a href="#" class="btn">Explore Marketplace</a>
+      </div>
+      <div id="loading-app" style="display:none;">
+        <h1>Loading App...</h1>
+        <div class="loader" style="display:block;"></div>
+        <p>Connecting to IBCN Secure Storage...</p>
+      </div>
+    </div>
+
+    <script>
+      // Logic to handle /apps/{projectId}
+      const path = window.location.pathname;
+      if (path.startsWith('/apps/')) {
+        const parts = path.split('/');
+        const projectId = parts[2];
+        if (projectId) {
+          document.getElementById('content').style.display = 'none';
+          document.getElementById('loading-app').style.display = 'block';
+          
+          // Redirect to the actual file in Firebase Storage
+          // Replace 'ampg--consult' with your actual Firebase project ID if different
+          const storageUrl = `https://firebasestorage.googleapis.com/v0/b/ampg--consult.appspot.com/o/deployed_apps%2F${projectId}%2Findex.html?alt=media`;
+          
+          // In a real production setup, you would use a Cloud Function or Firebase Hosting 
+          // rewrites to mask this URL, but for now, this will make the app viewable.
+          setTimeout(() => {
+            window.location.href = storageUrl;
+          }, 1500);
+        }
+      }
+    </script>
+  </body>
+</html>

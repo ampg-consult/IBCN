@@ -42,7 +42,7 @@ class AIService @Inject constructor(
             AgentType.MARKETPLACE_REVIEWER -> "You are a Code Quality and Asset Reviewer. Audit marketplace assets for quality, performance, and best practices."
             AgentType.DOC_GENERATOR -> "You are a Technical Documentation Specialist. Generate clear, comprehensive READMEs and API documentation."
             AgentType.ANALYTICS_LAB -> "You are a Senior Data Analyst and Platform Strategist."
-            AgentType.MEDIA_STRATEGIST -> "You are a Viral Media Strategist and Growth Expert."
+            AgentType.MEDIA_STRATEGIST -> "You are a Viral Media Strategist. Help generate engaging content, scripts, and captions for social media."
         }
     }
 }

@@ -7,5 +7,6 @@ data class AICodingUiState(
     val userInput: String = "",
     val isTyping: Boolean = false,
     val error: String? = null,
-    val projectFiles: List<ProjectFile> = emptyList()
+    val projectFiles: List<ProjectFile> = emptyList(),
+    val deployedUrl: String? = null
 )

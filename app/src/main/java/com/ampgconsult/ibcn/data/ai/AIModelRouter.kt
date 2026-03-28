@@ -51,18 +51,9 @@ class AIModelRouter @Inject constructor(
 
     private fun isLightweightTask(agentType: AgentType): Boolean {
         return when (agentType) {
-            AgentType.USERNAME_ASSISTANT -> true
+            AgentType.USERNAME_ASSISTANT,
             AgentType.HABIT_GENERATOR -> true
-            AgentType.PRODUCT_MANAGER -> false
-            AgentType.ARCHITECT -> false
-            AgentType.DEVELOPER -> false
-            AgentType.DEVOPS -> false
-            AgentType.SECURITY -> false
-            AgentType.LAUNCHPAD_PLANNER -> false
-            AgentType.MARKETPLACE_REVIEWER -> false
-            AgentType.DOC_GENERATOR -> false
-            AgentType.ANALYTICS_LAB -> false
-            AgentType.MEDIA_STRATEGIST -> false
+            else -> false
         }
     }
 

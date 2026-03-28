@@ -27,6 +27,7 @@ import dagger.hilt.android.AndroidEntryPoint
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+    @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -78,6 +79,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppNavigation(
     authViewModel: AuthViewModel = hiltViewModel()
@@ -155,6 +157,9 @@ fun AppNavigation(
         composable("ai_coding") {
             AICodingScreen(onBack = { navController.popBackStack() })
         }
+        composable("ai_video_studio") {
+            AIVideoStudioScreen(onBack = { navController.popBackStack() })
+        }
         composable("ai_asset_generator") {
             AIAssetGeneratorScreen(
                 onBack = { navController.popBackStack() },
@@ -204,7 +209,8 @@ fun AppNavigation(
             MarketplaceScreen(
                 onBack = { navController.popBackStack() },
                 onNavigateToDetail = { id -> navController.navigate("marketplace_detail/$id") },
-                onNavigateToPublish = { navController.navigate("marketplace_publish") }
+                onNavigateToPublish = { navController.navigate("marketplace_publish") },
+                onNavigateToVideoStudio = { navController.navigate("ai_video_studio") }
             )
         }
         composable(

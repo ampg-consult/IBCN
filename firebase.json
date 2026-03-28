@@ -14,8 +14,8 @@
     ],
     "rewrites": [
       {
-        "source": "/apps/**",
-        "destination": "/apps/index.html"
+        "source": "/apps/:projectId/**",
+        "destination": "/index.html"
       },
       {
         "source": "**",

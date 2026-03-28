@@ -2,14 +2,16 @@ package com.ampgconsult.ibcn.ui.viewmodels
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.ampgconsult.ibcn.data.ai.AIBuilderOrchestrator
-import com.ampgconsult.ibcn.data.models.AgentResponse
 import com.ampgconsult.ibcn.data.models.InvestorInsight
 import com.ampgconsult.ibcn.data.models.LaunchpadConfig
+import com.ampgconsult.ibcn.data.models.MediaStatus
 import com.ampgconsult.ibcn.data.models.StartupProject
+import com.ampgconsult.ibcn.data.models.ViralVideoMetadata
+import com.ampgconsult.ibcn.data.repository.MediaGenerationService
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -19,14 +21,17 @@ data class LaunchpadUiState(
     val insights: List<InvestorInsight> = emptyList(),
     val config: LaunchpadConfig = LaunchpadConfig(),
     val isLoading: Boolean = false,
-    val isGeneratingPlan: Boolean = false,
-    val aiPlan: AgentResponse? = null
+    val isGenerating: Boolean = false,
+    val progress: Int = 0,
+    val stage: String = "",
+    val jobResult: Map<String, Any>? = null,
+    val error: String? = null
 )
 
 @HiltViewModel
 class StartupLaunchpadViewModel @Inject constructor(
     private val firestore: FirebaseFirestore,
-    private val aiOrchestrator: AIBuilderOrchestrator
+    private val mediaService: MediaGenerationService
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(LaunchpadUiState())
@@ -39,7 +44,6 @@ class StartupLaunchpadViewModel @Inject constructor(
     fun fetchLaunchpadData() {
         _uiState.update { it.copy(isLoading = true) }
         viewModelScope.launch {
-            // Stream Launchpad Config
             firestore.collection("app_configs").document("launchpad")
                 .addSnapshotListener { snapshot, _ ->
                     snapshot?.toObject(LaunchpadConfig::class.java)?.let { config ->
@@ -47,7 +51,6 @@ class StartupLaunchpadViewModel @Inject constructor(
                     }
                 }
 
-            // Stream Launch-Ready Projects
             firestore.collection("startup_projects")
                 .orderBy("createdAt", Query.Direction.DESCENDING)
                 .addSnapshotListener { snapshot, error ->
@@ -57,7 +60,6 @@ class StartupLaunchpadViewModel @Inject constructor(
                     }
                 }
 
-            // Stream Investor Insights
             firestore.collection("investor_insights")
                 .addSnapshotListener { snapshot, error ->
                     if (error == null) {
@@ -70,17 +72,55 @@ class StartupLaunchpadViewModel @Inject constructor(
         }
     }
 
-    fun generateStartupPlan(project: StartupProject) {
-        _uiState.update { it.copy(isGeneratingPlan = true) }
+    fun startLaunchpadJob(prompt: String) {
+        _uiState.update { it.copy(isGenerating = true, error = null, progress = 0, stage = "Initializing Launchpad...") }
         viewModelScope.launch {
-            aiOrchestrator.generateLaunchpadPlan(project.description)
-                .onEach { response ->
-                    _uiState.update { it.copy(aiPlan = response) }
+            val jobId = java.util.UUID.randomUUID().toString()
+            val userId = "user_id_placeholder" 
+            
+            val success = triggerLaunchpadBackend(userId, jobId, prompt)
+            
+            if (success) {
+                pollForJobStatus(jobId)
+            } else {
+                _uiState.update { it.copy(isGenerating = false, error = "Failed to start AI Launchpad") }
+            }
+        }
+    }
+
+    private suspend fun triggerLaunchpadBackend(userId: String, jobId: String, prompt: String): Boolean {
+        return try {
+            val result = mediaService.generateAIJob("launchpad", prompt, jobId)
+            result.isSuccess
+        } catch (e: Exception) { false }
+    }
+
+    private fun pollForJobStatus(jobId: String) {
+        viewModelScope.launch {
+            var isPolling = true
+            while (isPolling) {
+                delay(3000)
+                val statusUpdate = mediaService.getJobStatus(jobId)
+                
+                if (statusUpdate == null) continue
+
+                _uiState.update { it.copy(
+                    progress = statusUpdate.progress,
+                    stage = statusUpdate.stage,
+                    isGenerating = statusUpdate.status != "completed" && statusUpdate.status != "failed"
+                ) }
+
+                if (statusUpdate.status == "completed") {
+                    _uiState.update { it.copy(
+                        isGenerating = false,
+                        stage = "Launchpad Ready!"
+                    ) }
+                    isPolling = false
+                } else if (statusUpdate.status == "failed") {
+                    _uiState.update { it.copy(isGenerating = false, error = statusUpdate.error) }
+                    isPolling = false
                 }
-                .onCompletion {
-                    _uiState.update { it.copy(isGeneratingPlan = false) }
-                }
-                .collect()
+            }
         }
     }
 }

@@ -20,8 +20,10 @@ object RepositoryModule {
     @Singleton
     fun provideProjectRepository(
         projectDao: ProjectDao,
-        apiService: ApiService
-    ): ProjectRepository = ProjectRepository(projectDao, apiService)
+        apiService: ApiService,
+        firestore: FirebaseFirestore,
+        auth: FirebaseAuth
+    ): ProjectRepository = ProjectRepository(projectDao, apiService, firestore, auth)
 
     @Provides
     @Singleton

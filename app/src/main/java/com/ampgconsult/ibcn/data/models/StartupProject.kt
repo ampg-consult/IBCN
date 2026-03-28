@@ -9,7 +9,12 @@ data class StartupProject(
     val aiScore: Int = 0,
     val marketPotential: String = "Medium", // Low, Medium, High, Very High
     val creatorId: String = "",
-    val createdAt: Timestamp = Timestamp.now()
+    val createdAt: Timestamp = Timestamp.now(),
+    // FIX 5 & 7: Pipeline Status tracking
+    val status: String = "IDLE", // IDLE, DEPLOYING, DEPLOYED, GENERATING_VIDEO, VIDEO_READY, LISTED, FAILED
+    val liveUrl: String? = null,
+    val videoUrl: String? = null,
+    val marketplaceId: String? = null
 )
 
 data class InvestorInsight(

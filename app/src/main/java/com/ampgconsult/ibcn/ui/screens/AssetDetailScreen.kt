@@ -1,5 +1,6 @@
 package com.ampgconsult.ibcn.ui.screens
 
+import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -16,11 +17,17 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.media3.common.MediaItem
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.PlayerView
 import com.ampgconsult.ibcn.ui.viewmodels.MarketplaceViewModel
 import com.ampgconsult.ibcn.ui.viewmodels.PaymentViewModel
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(UnstableApi::class)
+@ExperimentalMaterial3Api
 @Composable
 fun AssetDetailScreen(
     assetId: String,
@@ -91,7 +98,7 @@ fun AssetDetailScreen(
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
             ) {
-                // Header Image
+                // Header Image or Video (FIX 4.2)
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -99,7 +106,12 @@ fun AssetDetailScreen(
                         .background(MaterialTheme.colorScheme.primaryContainer),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Default.Extension, contentDescription = null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary)
+                    if (asset.type == "video" && asset.assetUrl.isNotBlank()) {
+                        // FIX 3: VIDEO PLAYER
+                        VideoPlayerView(url = asset.assetUrl)
+                    } else {
+                        Icon(Icons.Default.Extension, contentDescription = null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary)
+                    }
                 }
 
                 Column(modifier = Modifier.padding(16.dp)) {
@@ -217,6 +229,49 @@ fun AssetDetailScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+@UnstableApi
+@Composable
+fun VideoPlayerView(url: String) {
+    val context = LocalContext.current
+    val exoPlayer = remember {
+        ExoPlayer.Builder(context).build().apply {
+            setMediaItem(MediaItem.fromUri(url))
+            prepare()
+            playWhenReady = true
+        }
+    }
+
+    var isInitialized by remember { mutableStateOf(false) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            exoPlayer.release()
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        AndroidView(
+            factory = {
+                PlayerView(it).apply {
+                    player = exoPlayer
+                    useController = true
+                }
+            },
+            update = {
+                // Video initialized check
+                if (exoPlayer.playbackState == ExoPlayer.STATE_READY) {
+                    isInitialized = true
+                }
+            },
+            modifier = Modifier.fillMaxSize()
+        )
+
+        if (!isInitialized) {
+            CircularProgressIndicator(color = Color.White)
         }
     }
 }

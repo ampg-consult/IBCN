@@ -26,6 +26,7 @@ fun MarketplaceScreen(
     onBack: () -> Unit,
     onNavigateToDetail: (String) -> Unit,
     onNavigateToPublish: () -> Unit,
+    onNavigateToVideoStudio: () -> Unit,
     viewModel: MarketplaceViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -41,6 +42,9 @@ fun MarketplaceScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = onNavigateToVideoStudio) {
+                        Icon(Icons.Default.MovieCreation, contentDescription = "AI Video Studio", tint = MaterialTheme.colorScheme.primary)
+                    }
                     IconButton(onClick = onNavigateToPublish) {
                         Icon(Icons.Default.CloudUpload, contentDescription = "Publish")
                     }

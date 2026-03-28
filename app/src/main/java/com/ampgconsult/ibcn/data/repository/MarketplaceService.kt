@@ -45,7 +45,8 @@ class MarketplaceService @Inject constructor(
         category: String,
         techStack: List<String>,
         assetUrl: String,
-        previewImages: List<String> = emptyList()
+        previewImages: List<String> = emptyList(),
+        type: String = "Templates" // FIX 4.1: Added type parameter
     ): Result<String> {
         return try {
             ensureAuthReady()
@@ -65,7 +66,8 @@ class MarketplaceService @Inject constructor(
                 previewImages = previewImages,
                 tags = techStack,
                 createdAt = Timestamp.now(),
-                updatedAt = Timestamp.now()
+                updatedAt = Timestamp.now(),
+                type = type // FIX 4.1: Assign type
             )
 
             firestore.collection("marketplace_assets").document(asset.id).set(asset).await()

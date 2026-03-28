@@ -1,0 +1,60 @@
+name: ibcn
+description: Intelligent Builder Collaboration Network - Unified Platform
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+  
+  # Navigation & Routing
+  go_router: ^13.2.0
+  
+  # Backend & Auth
+  firebase_core: ^2.27.0
+  firebase_auth: ^4.17.8
+  cloud_firestore: ^4.15.8
+  firebase_storage: ^11.6.9
+  firebase_messaging: ^14.7.19
+  google_sign_in: ^6.2.1
+  
+  # AI & Network
+  openai_dart: ^0.8.4
+  http: ^1.2.0
+  dio: ^5.4.1
+  
+  # UI & Components
+  provider: ^6.1.2
+  flutter_riverpod: ^2.4.10
+  cached_network_image: ^3.3.1
+  google_fonts: ^6.1.0
+  font_awesome_flutter: ^10.6.0
+  shimmer: ^3.0.0
+  
+  # Video Playback
+  video_player: ^2.8.2
+  chewie: ^1.7.1
+  
+  # Responsive & Layout
+  responsive_framework: ^1.4.0
+  
+  # Dev Lab / IDE specific
+  code_text_field: ^2.0.1
+  highlight: ^0.7.0
+  
+  # Stripe for SaaS Engine
+  flutter_stripe: ^10.1.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/
+    - assets/icons/

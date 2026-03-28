@@ -1,7 +1,7 @@
 {
   "name": "ibcn-deploy-engine",
-  "version": "1.0.0",
-  "description": "Flutter Build Engine for IBCN",
+  "version": "1.1.0",
+  "description": "IBCN Real-time Build & Health Engine",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -9,6 +9,8 @@
   "dependencies": {
     "express": "^4.18.2",
     "fs-extra": "^11.1.1",
-    "firebase-admin": "^12.0.0"
+    "firebase-admin": "^12.0.0",
+    "ws": "^8.14.2",
+    "cors": "^2.8.5"
   }
 }

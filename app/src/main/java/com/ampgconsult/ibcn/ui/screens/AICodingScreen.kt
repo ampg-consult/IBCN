@@ -337,7 +337,6 @@ fun EmptyStatePlaceholder(onSuggestionClick: (String) -> Unit) {
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ChatBubble(message: AICodingMessage, onCopyCode: (String) -> Unit, onApplyChanges: (String) -> Unit) {
     val isUser = message.role == "user"

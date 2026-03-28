@@ -1,115 +1,200 @@
 package com.ampgconsult.ibcn.data.repository
 
+import android.content.Context
+import android.util.Log
 import com.ampgconsult.ibcn.data.models.*
-import com.ampgconsult.ibcn.data.network.AIService
-import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
-import kotlinx.coroutines.delay
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.*
 import kotlinx.coroutines.tasks.await
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.util.*
 import javax.inject.Inject
+import javax.inject.Named
 import javax.inject.Singleton
 
 @Singleton
 class MediaGenerationService @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val firestore: FirebaseFirestore,
     private val auth: FirebaseAuth,
-    private val aiService: AIService
+    private val okHttpClient: OkHttpClient,
+    @Named("baseUrl") private val baseUrl: String
 ) {
+    private val TAG = "MediaGenerationService"
+    
+    // Using api.ibcn.site as primary, falling back to Railway domain if needed
+    private val videoEngineUrl = "https://api.ibcn.site" 
+
     /**
-     * Entry point: Trigger viral media generation for an asset.
+     * Unified entry point for all AI Jobs (Video, Launchpad, etc.)
+     * Returns the jobId confirmed by the server.
      */
-    suspend fun generateViralMedia(assetId: String, assetTitle: String, assetDescription: String): Result<ViralVideoMetadata> {
-        val uid = auth.currentUser?.uid ?: return Result.failure(Exception("Not authenticated"))
-        
+    suspend fun generateAIJob(type: String, prompt: String, assetId: String? = null): Result<String> {
+        val uid = auth.currentUser?.uid ?: return Result.failure(Exception("Please log in"))
         return try {
-            // 1. Generate Script, Caption, and Hashtags via OpenAI
-            val prompt = """
-                Act as a Viral Media Strategist for IBCN. 
-                Create a high-converting short-form video script (9:16) for this digital asset:
-                Title: $assetTitle
-                Description: $assetDescription
-                
-                Return a JSON object with:
-                - hook: A 2-second attention grabber.
-                - highlights: 3 key features.
-                - cta: A strong call to action.
-                - caption: An engaging caption for TikTok/Shorts.
-                - hashtags: List of 5 viral hashtags.
-            """.trimIndent()
+            val jobId = UUID.randomUUID().toString()
+            val payload = JSONObject().apply {
+                put("jobId", jobId)
+                put("userId", uid)
+                put("prompt", prompt)
+            }
 
-            val aiResult = aiService.getResponse(prompt, AgentType.MEDIA_STRATEGIST)
-            if (aiResult.isFailure) return Result.failure(aiResult.exceptionOrNull()!!)
+            val body = payload.toString().toRequestBody("application/json".toMediaType())
+            val finalUrl = "$videoEngineUrl/generate-$type"
+            
+            Log.d(TAG, "Requesting AI Job: $finalUrl")
 
-            val json = JSONObject(aiResult.getOrThrow())
-            val script = VideoScript(
-                hook = json.getString("hook"),
-                highlights = json.getJSONArray("highlights").let { arr -> List(arr.length()) { arr.getString(it) } },
-                cta = json.getString("cta")
-            )
+            val request = Request.Builder()
+                .url(finalUrl)
+                .post(body)
+                .build()
 
-            val videoMetadata = ViralVideoMetadata(
-                id = UUID.randomUUID().toString(),
-                assetId = assetId,
-                script = script,
-                caption = json.getString("caption"),
-                hashtags = json.getJSONArray("hashtags").let { arr -> List(arr.length()) { arr.getString(it) } },
-                status = MediaStatus.GENERATING,
-                createdAt = Timestamp.now()
-            )
+            val responseBody = withContext(Dispatchers.IO) {
+                okHttpClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        val err = response.body?.string() ?: ""
+                        Log.e(TAG, "Server Error ${response.code}: $err")
+                        throw Exception("Engine error: ${response.code}")
+                    }
+                    response.body?.string() ?: ""
+                }
+            }
 
-            // Save initial record
-            firestore.collection("viral_media").document(videoMetadata.id).set(videoMetadata).await()
+            val json = JSONObject(responseBody)
+            val serverJobId = json.optString("jobId", jobId)
 
-            // 2. Simulate Asynchronous Media Rendering (In production, this would call a Cloud Run / Remotion service)
-            // Since OpenAI is the engine, we focus on the content. 
-            // We'll generate a "simulated" video URL for the demo UI.
-            renderVideoAsync(videoMetadata.id)
-
-            Result.success(videoMetadata)
+            if (type == "video" && assetId != null) {
+                val initialMedia = ViralVideoMetadata(
+                    id = serverJobId,
+                    assetId = assetId,
+                    status = MediaStatus.GENERATING,
+                    caption = "Initializing..."
+                )
+                saveMediaToFirestore(initialMedia)
+            }
+            Result.success(serverJobId)
         } catch (e: Exception) {
+            Log.e(TAG, "AI Job failed: ${e.message}")
             Result.failure(e)
         }
     }
 
-    private suspend fun renderVideoAsync(mediaId: String) {
-        // Asynchronous update to READY status
-        // In a real implementation, a backend webhook from a video service would trigger this.
-        delay(5000) 
-        firestore.collection("viral_media").document(mediaId).update(
-            mapOf(
-                "status" to MediaStatus.READY,
-                "videoUrl" to "https://storage.ibcn.app/videos/$mediaId.mp4", // Mocked production path
-                "thumbnailUrl" to "https://storage.ibcn.app/thumbnails/$mediaId.jpg"
-            )
-        )
-    }
-
-    suspend fun getMediaForAsset(assetId: String): ViralVideoMetadata? {
-        return try {
-            firestore.collection("viral_media")
-                .whereEqualTo("assetId", assetId)
-                .limit(1)
-                .get()
-                .await()
-                .toObjects(ViralVideoMetadata::class.java)
-                .firstOrNull()
-        } catch (e: Exception) {
-            null
+    /**
+     * Legacy compatibility wrapper for existing business logic components.
+     */
+    suspend fun generateViralMedia(assetId: String, title: String, description: String): Result<ViralVideoMetadata> {
+        val result = generateAIJob("video", "$title: $description", assetId)
+        return if (result.isSuccess) {
+            val jobId = result.getOrNull() ?: ""
+            Result.success(ViralVideoMetadata(
+                id = jobId,
+                assetId = assetId,
+                status = MediaStatus.GENERATING,
+                caption = "Generating video..."
+            ))
+        } else {
+            Result.failure(result.exceptionOrNull() ?: Exception("Video generation failed"))
         }
     }
 
-    suspend fun trackShare(mediaId: String, platform: String) {
-        val ref = firestore.collection("viral_media").document(mediaId).collection("metrics").document("shares")
-        firestore.runTransaction { transaction ->
-            val snapshot = transaction.get(ref)
-            if (!snapshot.exists()) {
-                transaction.set(ref, mapOf(platform to 1))
-            } else {
-                transaction.update(ref, platform, (snapshot.getLong(platform) ?: 0) + 1)
+    /**
+     * Authoritative job status polling.
+     * Uses JobStatusUpdate from com.ampgconsult.ibcn.data.models
+     */
+    suspend fun getJobStatus(jobId: String): JobStatusUpdate? = withContext(Dispatchers.IO) {
+        try {
+            val request = Request.Builder()
+                .url("$videoEngineUrl/status/$jobId")
+                .header("Cache-Control", "no-cache")
+                .build()
+            
+            val responseBody = okHttpClient.newCall(request).execute().use { response ->
+                if (response.isSuccessful) response.body?.string() else null
+            } ?: return@withContext null
+
+            val json = JSONObject(responseBody)
+            
+            // Map the result JSONObject to a Map for compatibility with our global model
+            val resultMap = mutableMapOf<String, Any>()
+            json.optJSONObject("result")?.let { res ->
+                val keys = res.keys()
+                while(keys.hasNext()) {
+                    val key = keys.next()
+                    resultMap[key] = res.get(key)
+                }
             }
-        }.await()
+
+            JobStatusUpdate(
+                status = json.optString("status"),
+                stage = json.optString("stage"),
+                progress = json.optInt("progress"),
+                videoUrl = if (json.isNull("videoUrl")) null else json.optString("videoUrl"),
+                result = if (resultMap.isEmpty()) null else resultMap,
+                error = if (json.isNull("error")) null else json.optString("error")
+            )
+        } catch (e: Exception) { 
+            Log.e(TAG, "Status check error: ${e.message}")
+            null 
+        }
+    }
+
+    suspend fun saveMediaToFirestore(media: ViralVideoMetadata) {
+        val uid = auth.currentUser?.uid ?: return
+        try {
+            val updateData = hashMapOf(
+                "id" to media.id,
+                "assetId" to media.assetId,
+                "videoUrl" to media.videoUrl,
+                "thumbnailUrl" to media.thumbnailUrl,
+                "caption" to media.caption,
+                "hashtags" to media.hashtags,
+                "status" to media.status.name,
+                "createdAt" to media.createdAt
+            )
+            firestore.collection("users").document(uid)
+                .collection("videos").document(media.id)
+                .set(updateData)
+                .await()
+        } catch (e: Exception) {
+            Log.e(TAG, "Firestore save error: ${e.message}")
+        }
+    }
+
+    suspend fun getMediaForAsset(assetId: String): ViralVideoMetadata? {
+        val uid = auth.currentUser?.uid ?: return null
+        return try {
+            firestore.collection("users").document(uid)
+                .collection("videos")
+                .whereEqualTo("assetId", assetId)
+                .limit(1).get().await()
+                .toObjects(ViralVideoMetadata::class.java).firstOrNull()
+        } catch (e: Exception) { null }
+    }
+
+    suspend fun trackShare(mediaId: String, platform: String) {
+        val uid = auth.currentUser?.uid ?: return
+        try {
+            val ref = firestore.collection("users").document(uid)
+                .collection("videos").document(mediaId)
+                .collection("metrics").document("shares")
+            
+            firestore.runTransaction { transaction ->
+                val snapshot = transaction.get(ref)
+                if (!snapshot.exists()) {
+                    transaction.set(ref, mapOf(platform to 1))
+                } else {
+                    val count = snapshot.getLong(platform) ?: 0L
+                    transaction.update(ref, platform, count + 1)
+                }
+            }.await()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error tracking share: ${e.message}")
+        }
     }
 }

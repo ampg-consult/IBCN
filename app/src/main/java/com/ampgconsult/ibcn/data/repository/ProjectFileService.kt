@@ -13,6 +13,9 @@ class ProjectFileService @Inject constructor(
     private val firestore: FirebaseFirestore,
     private val auth: FirebaseAuth
 ) {
+    /**
+     * MODULE 2: Save to specific production path: /users/{userId}/projects/{projectId}/files
+     */
     suspend fun uploadFile(projectId: String, fileName: String, content: String, path: String = ""): Result<String> {
         val uid = auth.currentUser?.uid ?: return Result.failure(Exception("Not authenticated"))
         
@@ -36,7 +39,8 @@ class ProjectFileService @Inject constructor(
         )
 
         return try {
-            firestore.collection("projects").document(projectId)
+            firestore.collection("users").document(uid)
+                .collection("projects").document(projectId)
                 .collection("files").document(fileId)
                 .set(projectFile).await()
             Result.success(fileId)
@@ -46,8 +50,10 @@ class ProjectFileService @Inject constructor(
     }
 
     suspend fun getProjectFiles(projectId: String): List<ProjectFile> {
+        val uid = auth.currentUser?.uid ?: return emptyList()
         return try {
-            firestore.collection("projects").document(projectId)
+            firestore.collection("users").document(uid)
+                .collection("projects").document(projectId)
                 .collection("files")
                 .get().await()
                 .toObjects(ProjectFile::class.java)
@@ -57,8 +63,10 @@ class ProjectFileService @Inject constructor(
     }
 
     suspend fun updateFileContent(projectId: String, fileId: String, newContent: String): Result<Unit> {
+        val uid = auth.currentUser?.uid ?: return Result.failure(Exception("Not authenticated"))
         return try {
-            firestore.collection("projects").document(projectId)
+            firestore.collection("users").document(uid)
+                .collection("projects").document(projectId)
                 .collection("files").document(fileId)
                 .update(mapOf(
                     "content" to newContent,
@@ -67,17 +75,6 @@ class ProjectFileService @Inject constructor(
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
-        }
-    }
-    
-    suspend fun getFile(projectId: String, fileId: String): ProjectFile? {
-        return try {
-            firestore.collection("projects").document(projectId)
-                .collection("files").document(fileId)
-                .get().await()
-                .toObject(ProjectFile::class.java)
-        } catch (e: Exception) {
-            null
         }
     }
 }

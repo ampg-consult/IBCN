@@ -13,3 +13,21 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# Node.js
+node_modules/
+npm-debug.log
+yarn-error.log
+video-engine/storage/temp/
+video-engine/storage/output/
+
+# Firebase / Google Services
+google-services.json
+app/google-services.json
+
+# Secrets
+.env
+video-engine/.env
+*.jks
+*.keystore
+secrets.xml

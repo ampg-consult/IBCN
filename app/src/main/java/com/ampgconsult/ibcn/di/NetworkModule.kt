@@ -1,6 +1,7 @@
 package com.ampgconsult.ibcn.di
 
 import android.os.Build
+import android.util.Log
 import com.ampgconsult.ibcn.data.network.ApiService
 import dagger.Module
 import dagger.Provides
@@ -10,13 +11,37 @@ import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
-import java.net.NetworkInterface
 import java.util.concurrent.TimeUnit
+import javax.inject.Named
 import javax.inject.Singleton
 
 @Module
 @InstallIn(SingletonComponent::class)
 object NetworkModule {
+
+    private const val TAG = "NetworkModule"
+
+    @Provides
+    @Singleton
+    @Named("isEmulator")
+    fun provideIsEmulator(): Boolean {
+        return Build.FINGERPRINT.contains("generic") ||
+               Build.FINGERPRINT.contains("unknown") ||
+               Build.MODEL.contains("google_sdk") ||
+               Build.MODEL.contains("Emulator") ||
+               Build.MODEL.contains("Android SDK built for x86") ||
+               Build.DEVICE.contains("generic") ||
+               Build.PRODUCT.contains("sdk_google")
+    }
+
+    @Provides
+    @Singleton
+    @Named("baseUrl")
+    fun provideBaseUrl(): String {
+        // PRODUCTION CONFIGURATION
+        // All local URLs (10.0.2.2, localhost, etc) are replaced with production domain
+        return "https://api.ibcn.site"
+    }
 
     @Provides
     @Singleton
@@ -25,55 +50,26 @@ object NetworkModule {
             .addInterceptor(HttpLoggingInterceptor().apply {
                 level = HttpLoggingInterceptor.Level.BODY
             })
-            .connectTimeout(30, TimeUnit.SECONDS)
-            .readTimeout(60, TimeUnit.SECONDS)
-            .writeTimeout(60, TimeUnit.SECONDS)
+            .connectTimeout(60, TimeUnit.SECONDS)
+            .readTimeout(120, TimeUnit.SECONDS)
+            .writeTimeout(120, TimeUnit.SECONDS)
             .build()
     }
 
     @Provides
     @Singleton
-    fun provideRetrofit(okHttpClient: OkHttpClient): Retrofit {
-        // PART 8 — EMULATOR CHECK
-        val isEmulator = Build.FINGERPRINT.contains("generic") || 
-                         Build.FINGERPRINT.contains("unknown") || 
-                         Build.MODEL.contains("google_sdk") || 
-                         Build.MODEL.contains("Emulator") || 
-                         Build.MODEL.contains("Android SDK built for x86")
-        
-        val baseUrl = if (isEmulator) {
-            "http://10.0.2.2:8000/"
-        } else {
-            val hostIp = getHostIpGuess()
-            "http://$hostIp:8000/"
-        }
-
+    fun provideRetrofit(
+        okHttpClient: OkHttpClient,
+        @Named("baseUrl") baseUrl: String
+    ): Retrofit {
+        // Retrofit standard for secondary APIs (like FastAPI agents on port 8000)
+        // In production, these might be subdomains or paths
+        val finalUrl = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
         return Retrofit.Builder()
-            .baseUrl(baseUrl)
+            .baseUrl(finalUrl)
             .client(okHttpClient)
             .addConverterFactory(GsonConverterFactory.create())
             .build()
-    }
-
-    private fun getHostIpGuess(): String {
-        try {
-            val interfaces = NetworkInterface.getNetworkInterfaces()
-            while (interfaces.hasMoreElements()) {
-                val networkInterface = interfaces.nextElement()
-                val addresses = networkInterface.inetAddresses
-                while (addresses.hasMoreElements()) {
-                    val address = addresses.nextElement()
-                    if (!address.isLoopbackAddress && address is java.net.Inet4Address) {
-                        val ip = address.hostAddress
-                        if (ip != null) {
-                            val subnet = ip.substringBeforeLast(".")
-                            return "$subnet.1" 
-                        }
-                    }
-                }
-            }
-        } catch (e: Exception) {}
-        return "10.0.2.2"
     }
 
     @Provides

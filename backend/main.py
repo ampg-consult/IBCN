@@ -53,6 +53,19 @@ manager = ConnectionManager()
 async def root():
     return {"message": "IBCN API v1.1.0 Online"}
 
+@app.get("/health")
+async def health():
+    return {
+        "status": "healthy",
+        "timestamp": datetime.datetime.now().isoformat(),
+        "version": "1.1.0",
+        "services": {
+            "openai": "online",
+            "database": "online",
+            "websocket_manager": "active"
+        }
+    }
+
 @app.get("/projects", response_model=List[Project])
 async def get_projects():
     return projects_db

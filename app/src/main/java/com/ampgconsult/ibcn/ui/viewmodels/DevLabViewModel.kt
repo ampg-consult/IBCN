@@ -6,6 +6,7 @@ import com.ampgconsult.ibcn.data.models.AgentType
 import com.ampgconsult.ibcn.data.models.ProjectFile
 import com.ampgconsult.ibcn.data.network.AIService
 import com.ampgconsult.ibcn.data.repository.ProjectFileService
+import com.google.firebase.firestore.FirebaseFirestore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.*
@@ -27,7 +28,8 @@ data class DevLabUiState(
 @HiltViewModel
 class DevLabViewModel @Inject constructor(
     private val fileService: ProjectFileService,
-    private val aiService: AIService
+    private val aiService: AIService,
+    private val firestore: FirebaseFirestore
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(DevLabUiState())
@@ -35,20 +37,32 @@ class DevLabViewModel @Inject constructor(
 
     private var currentProjectId: String? = null
     private var streamingJob: Job? = null
+    private var fileListenerJob: Job? = null
 
     fun loadProject(projectId: String) {
         currentProjectId = projectId
         _uiState.update { it.copy(isLoading = true) }
-        viewModelScope.launch {
-            val projectFiles = fileService.getProjectFiles(projectId)
-            _uiState.update { 
-                it.copy(
-                    files = projectFiles,
-                    isLoading = false,
-                    activeFile = projectFiles.firstOrNull(),
-                    editorContent = projectFiles.firstOrNull()?.content ?: ""
-                )
-            }
+        
+        // MODULE 3: REAL-TIME SYNC
+        fileListenerJob?.cancel()
+        fileListenerJob = viewModelScope.launch {
+            firestore.collection("projects").document(projectId).collection("files")
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        _uiState.update { it.copy(error = error.message) }
+                        return@addSnapshotListener
+                    }
+                    val files = snapshot?.toObjects(ProjectFile::class.java) ?: emptyList()
+                    _uiState.update { state ->
+                        val updatedActiveFile = files.find { it.id == state.activeFile?.id } ?: files.firstOrNull()
+                        state.copy(
+                            files = files,
+                            isLoading = false,
+                            activeFile = updatedActiveFile,
+                            editorContent = if (state.isCodeStreaming) state.editorContent else (updatedActiveFile?.content ?: "")
+                        )
+                    }
+                }
         }
     }
 
@@ -62,7 +76,9 @@ class DevLabViewModel @Inject constructor(
     }
 
     fun onContentChange(newContent: String) {
-        _uiState.update { it.copy(editorContent = newContent) }
+        if (!_uiState.value.isCodeStreaming) {
+            _uiState.update { it.copy(editorContent = newContent) }
+        }
     }
 
     fun onAiPromptChange(newPrompt: String) {
@@ -76,41 +92,19 @@ class DevLabViewModel @Inject constructor(
         
         viewModelScope.launch {
             fileService.updateFileContent(pid, file.id, content)
-            val updatedFiles = fileService.getProjectFiles(pid)
-            _uiState.update { it.copy(files = updatedFiles) }
         }
     }
 
     fun sendAiRequest() {
         val prompt = _uiState.value.aiPrompt
         if (prompt.isBlank()) return
-
-        val activeFile = _uiState.value.activeFile
-        val editorContent = _uiState.value.editorContent
-        
-        val contextPrompt = """
-            You are an expert developer assistant in the IBCN Dev Lab.
-            
-            CURRENT FILE: ${activeFile?.fileName ?: "None"}
-            CURRENT CONTENT:
-            $editorContent
-            
-            USER REQUEST: $prompt
-            
-            Instructions:
-            1. If generating code, provide ONLY the code block.
-            2. If explaining, be concise.
-        """.trimIndent()
-
         _uiState.update { it.copy(aiResponse = "", isAiStreaming = true, aiPrompt = "") }
 
         streamingJob?.cancel()
         streamingJob = viewModelScope.launch {
             var fullResponse = ""
-            aiService.streamResponse(contextPrompt, AgentType.DEVELOPER)
-                .catch { e ->
-                    _uiState.update { it.copy(error = e.message, isAiStreaming = false) }
-                }
+            aiService.streamResponse(prompt, AgentType.DEVELOPER)
+                .catch { e -> _uiState.update { it.copy(error = e.message, isAiStreaming = false) } }
                 .collect { chunk ->
                     fullResponse += chunk
                     _uiState.update { it.copy(aiResponse = fullResponse) }
@@ -121,31 +115,13 @@ class DevLabViewModel @Inject constructor(
 
     fun streamCodeToEditor(prompt: String) {
         val activeFile = _uiState.value.activeFile ?: return
-        val editorContent = _uiState.value.editorContent
-
-        val contextPrompt = """
-            Act as an Autonomous Code Streamer. 
-            Target File: ${activeFile.fileName}
-            Current Code:
-            $editorContent
-            
-            Task: $prompt
-            
-            Instructions:
-            - Return ONLY the updated code for the entire file.
-            - Do not use markdown blocks.
-            - Stream the code line by line.
-        """.trimIndent()
-
         _uiState.update { it.copy(isCodeStreaming = true) }
 
         streamingJob?.cancel()
         streamingJob = viewModelScope.launch {
             var fullCode = ""
-            aiService.streamResponse(contextPrompt, AgentType.DEVELOPER)
-                .catch { e ->
-                    _uiState.update { it.copy(error = e.message, isCodeStreaming = false) }
-                }
+            aiService.streamResponse(prompt, AgentType.DEVELOPER)
+                .catch { e -> _uiState.update { it.copy(error = e.message, isCodeStreaming = false) } }
                 .collect { chunk ->
                     fullCode += chunk
                     _uiState.update { it.copy(editorContent = fullCode) }
@@ -156,24 +132,17 @@ class DevLabViewModel @Inject constructor(
     }
 
     fun applyToIDE(code: String) {
-        // Logic to insert snippet into current editor content at cursor or append
-        // For simplicity, we replace or append to the current file
         val currentContent = _uiState.value.editorContent
-        val newContent = if (currentContent.contains("// AI INSERT HERE")) {
-            currentContent.replace("// AI INSERT HERE", code)
-        } else {
-            currentContent + "\n\n" + code
-        }
+        val newContent = currentContent + "\n\n" + code
         _uiState.update { it.copy(editorContent = newContent) }
         saveCurrentFile()
     }
 
     fun triggerAiAction(action: String) {
         when (action) {
-            "FIX" -> streamCodeToEditor("Fix bugs in this file.")
-            "REFACTOR" -> streamCodeToEditor("Refactor this file for better performance.")
-            "EXPLAIN" -> sendAiRequest() // Explain uses chat panel
-            else -> return
+            "FIX" -> streamCodeToEditor("Fix bugs in the current file.")
+            "REFACTOR" -> streamCodeToEditor("Refactor the current file for performance.")
+            "EXPLAIN" -> sendAiRequest()
         }
     }
     

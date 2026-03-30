@@ -9,8 +9,20 @@ const OpenAI = require('openai');
 const axios = require('axios');
 const { connection } = require('./queue');
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+// Initialize OpenAI conditionally to prevent startup crash
+let openai;
+try {
+    if (!process.env.OPENAI_API_KEY) {
+        console.error("❌ ERROR: OPENAI_API_KEY is missing from environment variables.");
+    } else {
+        openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+        console.log("✅ OpenAI Client Initialized");
+    }
+} catch (e) {
+    console.error("❌ Failed to initialize OpenAI:", e.message);
+}
+
+const supabase = createClient(process.env.SUPABASE_URL || '', process.env.SUPABASE_KEY || '');
 
 const JOBS_TABLE = 'Video_jobs';
 const TEMP_DIR = path.resolve(__dirname, 'storage', 'temp');
@@ -49,6 +61,9 @@ async function updateJobStatus(jobId, updateData) {
 }
 
 const worker = new Worker('video-generation', async job => {
+    if (!openai) {
+        throw new Error("OpenAI Client not initialized. Check your API Key.");
+    }
     const { jobId, prompt, userId, type } = job.data;
     if (type === 'video') await processVideo(jobId, prompt, userId);
     else if (type === 'launchpad') await processLaunchpad(jobId, prompt, userId);

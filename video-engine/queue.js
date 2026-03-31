@@ -1,25 +1,30 @@
 const { Queue } = require('bullmq');
 const Redis = require('ioredis');
 
-let connection;
-try {
-    if (!process.env.REDIS_URL) {
-        console.warn("⚠️ WARNING: REDIS_URL is missing. Queue will not function.");
-        // Fallback to local for dev, but this will fail in production
-        connection = new Redis({ host: '127.0.0.1', port: 6379, maxRetriesPerRequest: null });
-    } else {
-        connection = new Redis(process.env.REDIS_URL, {
-            maxRetriesPerRequest: null,
-            connectTimeout: 10000
-        });
-        console.log("✅ Redis Connection Initialized");
+// Simple, robust connection configuration
+const redisOptions = {
+    maxRetriesPerRequest: null,
+    connectTimeout: 15000,
+    reconnectOnError: (err) => {
+        const targetError = "READONLY";
+        if (err.message.includes(targetError)) return true;
+        return false;
     }
-} catch (e) {
-    console.error("❌ Redis Initialization Error:", e.message);
+};
+
+let connection;
+if (process.env.REDIS_URL) {
+    try {
+        connection = new Redis(process.env.REDIS_URL, redisOptions);
+        console.log("✅ Queue: Redis connection string used");
+    } catch (e) {
+        console.error("❌ Queue: Redis connection failed:", e.message);
+    }
+} else {
+    console.warn("⚠️ Queue: REDIS_URL not found, using localhost");
+    connection = new Redis(redisOptions);
 }
 
-const videoQueue = new Queue('video-generation', {
-    connection
-});
+const videoQueue = new Queue('video-generation', { connection });
 
 module.exports = { videoQueue, connection };

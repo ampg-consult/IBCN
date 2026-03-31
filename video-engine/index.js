@@ -1,101 +1,79 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const dns = require('node:dns');
 
-// 1. IMMEDIATE STARTUP
 const app = express();
 const PORT = process.env.PORT || 8081;
 
-// Basic middleware
-app.use(cors({ origin: "*", methods: ["GET", "POST"] }));
+app.use(cors({ origin: "*" }));
 app.use(express.json());
 
-// Healthcheck (Must be reachable ASAP)
+// 1. INSTANT HEALTHCHECK (To pass Railway's network check)
 app.get('/health', (req, res) => {
-    res.status(200).json({ 
-        status: "ok", 
-        timestamp: new Date().toISOString(),
-        env: {
-            node: process.version,
-            port: PORT
-        }
-    });
+    res.status(200).send('OK');
 });
 
-// Start listening immediately
-const server = app.listen(PORT, "0.0.0.0", () => {
-    console.log(`🚀 API SERVER LIVE ON PORT ${PORT}`);
-    console.log(`🔗 Healthcheck available at: http://0.0.0.0:${PORT}/health`);
+// 2. START LISTENING IMMEDIATELY
+app.listen(PORT, "0.0.0.0", () => {
+    console.log(`🚀 API BOOTED ON PORT ${PORT}`);
     
-    // 2. LAZY LOAD HEAVY SERVICES
-    initializeBackgroundServices();
+    // 3. INITIALIZE SERVICES LATER
+    setTimeout(initServices, 1000);
 });
 
-// 3. BACKGROUND INITIALIZATION
-async function initializeBackgroundServices() {
-    console.log("📦 Initializing background services...");
-    
+async function initServices() {
+    console.log("📦 Loading background modules...");
     try {
         const { createClient } = require('@supabase/supabase-js');
-        const Redis = require('ioredis');
         const { v4: uuidv4 } = require('uuid');
+        const Redis = require('ioredis');
+        
+        // Use try-require for queue/worker to prevent total crash
+        let videoQueue;
+        try {
+            const queueMod = require('./queue');
+            videoQueue = queueMod.videoQueue;
+            require('./worker');
+            console.log("✅ Worker and Queue Loaded");
+        } catch (e) {
+            console.error("❌ Failed to load Worker/Queue:", e.message);
+        }
 
-        // Fix for container networking
-        try { dns.setDefaultResultOrder('ipv4first'); } catch (e) {}
-
-        // Load Queue & Worker
-        const { videoQueue } = require('./queue');
-        require('./worker');
-
-        const supabase = (process.env.SUPABASE_URL && process.env.SUPABASE_KEY) 
-            ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY) 
+        const supabase = (process.env.SUPABASE_URL && process.env.SUPABASE_KEY)
+            ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY)
             : null;
 
         const redis = process.env.REDIS_URL ? new Redis(process.env.REDIS_URL) : null;
 
-        console.log("✅ Services Ready (Supabase:", !!supabase, "Redis:", !!redis, ")");
+        // Register the real endpoints
+        app.post('/generate-video', async (req, res) => {
+            if (!videoQueue) return res.status(503).json({ error: "Worker not ready" });
+            const { prompt, userId } = req.body;
+            const jobId = uuidv4();
+            try {
+                if (supabase) {
+                    await supabase.from('Video_jobs').upsert({ id: jobId, user_id: userId || 'anon', prompt, status: 'queued' });
+                }
+                await videoQueue.add('generate-video', { jobId, prompt, userId, type: 'video' });
+                res.status(202).json({ jobId, status: 'queued' });
+            } catch (err) { res.status(500).json({ error: err.message }); }
+        });
 
-        // Register Endpoints
-        setupEndpoints(app, supabase, redis, videoQueue, uuidv4);
-        
-    } catch (error) {
-        console.error("💥 Background Init Error:", error);
+        app.get('/status/:jobId', async (req, res) => {
+            if (!redis && !supabase) return res.status(503).json({ error: "DB not ready" });
+            const { jobId } = req.params;
+            try {
+                let job = redis ? JSON.parse(await redis.get(`job:${jobId}`) || 'null') : null;
+                if (!job && supabase) {
+                    const { data } = await supabase.from('Video_jobs').select('*').eq('id', jobId).maybeSingle();
+                    job = data;
+                }
+                res.json(job || { error: "Not found" });
+            } catch (err) { res.status(500).json({ error: err.message }); }
+        });
+
+        console.log("🚀 ALL SERVICES INITIALIZED");
+    } catch (err) {
+        console.error("💥 CRITICAL INIT FAILURE:", err);
     }
 }
-
-function setupEndpoints(app, supabase, redis, videoQueue, uuidv4) {
-    const JOBS_TABLE = 'Video_jobs';
-
-    app.post('/generate-video', async (req, res) => {
-        const { prompt, userId, jobId: requestedJobId } = req.body;
-        if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
-        if (!supabase) return res.status(503).json({ error: 'Database unavailable' });
-
-        const jobId = requestedJobId || uuidv4();
-        try {
-            const data = { id: jobId, user_id: userId || 'anonymous', prompt, status: 'queued', progress: 0 };
-            await supabase.from(JOBS_TABLE).upsert(data);
-            if (redis) await redis.set(`job:${jobId}`, JSON.stringify(data), 'EX', 3600);
-            await videoQueue.add('generate-video', { jobId, prompt, userId: userId || 'anonymous', type: 'video' });
-            res.status(202).json({ jobId, status: 'queued' });
-        } catch (e) { res.status(500).json({ error: e.message }); }
-    });
-
-    app.get('/status/:jobId', async (req, res) => {
-        const { jobId } = req.params;
-        try {
-            let job = redis ? JSON.parse(await redis.get(`job:${jobId}`) || 'null') : null;
-            if (!job && supabase) {
-                const { data } = await supabase.from(JOBS_TABLE).select('*').eq('id', jobId).maybeSingle();
-                if (data) job = data;
-            }
-            if (!job) return res.status(404).json({ error: 'Not found' });
-            res.json(job);
-        } catch (e) { res.status(500).json({ error: e.message }); }
-    });
-}
-
-// Global error handling
-process.on('uncaughtException', (err) => console.error('💥 Uncaught:', err));
-process.on('unhandledRejection', (err) => console.error('💥 Unhandled:', err));

@@ -1,4 +1,13 @@
 require('dotenv').config();
+const dns = require('node:dns');
+
+// DEVOPS FIX: Force IPv4 first to prevent "Connection error" in cloud environments
+try {
+    dns.setDefaultResultOrder('ipv4first');
+} catch (e) {
+    console.warn("DNS setting not supported on this Node version");
+}
+
 const { Worker } = require('bullmq');
 const { createClient } = require('@supabase/supabase-js');
 const fs = require('fs-extra');
@@ -11,27 +20,36 @@ const { connection } = require('./queue');
 
 console.log("🛠️ Worker Module Loading...");
 
-// 1. Initialize OpenAI
+// 1. Initialize OpenAI with extended timeout
 let openai;
-if (process.env.OPENAI_API_KEY) {
+if (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.startsWith('sk-')) {
     try {
-        openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+        openai = new OpenAI({ 
+            apiKey: process.env.OPENAI_API_KEY,
+            timeout: 60000, // 60 seconds timeout
+            maxRetries: 3
+        });
         console.log("✅ Worker: OpenAI Initialized");
     } catch (e) {
         console.error("❌ Worker: OpenAI Init Failed:", e.message);
     }
 }
 
-// 2. Initialize Supabase
-const supabaseUrl = process.env.SUPABASE_URL || '';
-const supabaseKey = process.env.SUPABASE_KEY || '';
-const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
+// 2. Persistent Redis Client for status updates (Efficiency fix)
+const statusRedis = process.env.REDIS_URL ? new Redis(process.env.REDIS_URL, { maxRetriesPerRequest: null }) : null;
+
+// 3. Initialize Supabase
+const supabase = (process.env.SUPABASE_URL && process.env.SUPABASE_KEY) 
+    ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY) 
+    : null;
 
 const JOBS_TABLE = 'Video_jobs';
 const TEMP_DIR = path.resolve(__dirname, 'storage', 'temp');
 const OUTPUT_DIR = path.resolve(__dirname, 'storage', 'output');
 
-// 3. Status Updater
+/**
+ * Robust Status Updater
+ */
 async function updateJobStatus(jobId, updateData) {
     const status = updateData.status || 'processing';
     const stage = updateData.stage || 'working';
@@ -47,20 +65,18 @@ async function updateJobStatus(jobId, updateData) {
         updated_at: new Date().toISOString()
     };
 
-    // Update Redis for polling
-    if (process.env.REDIS_URL) {
+    // Update Redis Cache
+    if (statusRedis) {
         try {
-            const redis = new Redis(process.env.REDIS_URL, { maxRetriesPerRequest: null });
-            await redis.set(`job:${jobId}`, JSON.stringify(payload), 'EX', 3600);
-            await redis.quit();
-        } catch (e) { console.error("Redis status update failed:", e.message); }
+            await statusRedis.set(`job:${jobId}`, JSON.stringify(payload), 'EX', 3600);
+        } catch (e) { console.error("Redis sync failed:", e.message); }
     }
 
-    // Update Supabase for persistence
+    // Update Supabase DB
     if (supabase) {
         try {
             await supabase.from(JOBS_TABLE).update(payload).eq('id', jobId);
-        } catch (e) { console.error("Supabase status update failed:", e.message); }
+        } catch (e) { console.error("Supabase sync failed:", e.message); }
     }
 }
 
@@ -71,42 +87,44 @@ const worker = new Worker('video-generation', async job => {
     const { jobId, prompt, userId, type } = job.data;
     console.log(`🚀 Processing ${type} job: ${jobId}`);
     
-    if (type === 'video') await processVideo(jobId, prompt, userId);
-    else if (type === 'launchpad') await processLaunchpad(jobId, prompt, userId);
+    try {
+        if (type === 'video') await processVideo(jobId, prompt, userId);
+        else if (type === 'launchpad') await processLaunchpad(jobId, prompt, userId);
+    } catch (err) {
+        console.error(`💥 Fatal error in job ${jobId}:`, err);
+        await updateJobStatus(jobId, { status: "failed", error: err.message, stage: 'failed' });
+    }
 }, { 
     connection,
-    concurrency: 1 // Process one video at a time to save memory
+    concurrency: 1 
 });
 
 worker.on('failed', (job, err) => {
-    console.error(`❌ Job ${job.id} failed:`, err.message);
+    console.error(`❌ Job ${job?.id} failed fundamentally:`, err.message);
 });
 
 // --- AI PIPELINES ---
 
 async function processLaunchpad(jobId, prompt, userId) {
-    try {
-        await updateJobStatus(jobId, { status: 'processing', stage: 'idea', progress: 10 });
-        const idea = await generateLaunchpadStep(prompt, "Refine into 1-sentence value prop: ");
-        
-        await updateJobStatus(jobId, { stage: 'validation', progress: 30 });
-        const validation = await generateLaunchpadStep(idea, "Provide market validation for: ");
-        
-        await updateJobStatus(jobId, { stage: 'plan', progress: 60 });
-        const plan = await generateLaunchpadStep(idea, "Generate 3-phase execution plan for: ");
+    await updateJobStatus(jobId, { status: 'processing', stage: 'idea', progress: 10 });
+    const idea = await generateLaunchpadStep(prompt, "Refine into 1-sentence value prop: ");
+    
+    await updateJobStatus(jobId, { stage: 'validation', progress: 30 });
+    const validation = await generateLaunchpadStep(idea, "Provide market validation for: ");
+    
+    await updateJobStatus(jobId, { stage: 'plan', progress: 60 });
+    const plan = await generateLaunchpadStep(idea, "Generate 3-phase execution plan for: ");
 
-        await updateJobStatus(jobId, {
-            status: 'completed', stage: 'done', progress: 100,
-            result: { appName: "AI Startup", description: idea, validation, plan }
-        });
-    } catch (error) {
-        await updateJobStatus(jobId, { status: "failed", error: error.message });
-    }
+    await updateJobStatus(jobId, {
+        status: 'completed', stage: 'done', progress: 100,
+        result: { appName: "AI Startup", description: idea, validation, plan }
+    });
 }
 
 async function processVideo(jobId, prompt, userId) {
     const jobWorkDir = path.resolve(TEMP_DIR, jobId);
     const finalOutputFile = path.resolve(OUTPUT_DIR, `${jobId}.mp4`);
+    
     try {
         await fs.ensureDir(jobWorkDir);
         await fs.ensureDir(OUTPUT_DIR);
@@ -114,7 +132,6 @@ async function processVideo(jobId, prompt, userId) {
         await updateJobStatus(jobId, { status: 'processing', stage: 'script', progress: 10 });
         const scriptData = await generateVideoScript(prompt);
         
-        // Simplified loop for reliability
         const sceneAssets = [];
         for (let i = 0; i < scriptData.scenes.length; i++) {
             const imgPath = path.resolve(jobWorkDir, `img_${i}.png`);
@@ -124,7 +141,7 @@ async function processVideo(jobId, prompt, userId) {
             await generateAudio(scriptData.scenes[i].text, audPath);
             
             sceneAssets.push({ ...scriptData.scenes[i], imgPath, audPath, index: i });
-            await updateJobStatus(jobId, { progress: 10 + ((i+1)/scriptData.scenes.length) * 50 });
+            await updateJobStatus(jobId, { stage: 'generating', progress: 10 + ((i+1)/scriptData.scenes.length) * 50 });
         }
 
         await updateJobStatus(jobId, { stage: 'rendering', progress: 70 });
@@ -145,20 +162,20 @@ async function processVideo(jobId, prompt, userId) {
             const { data: { publicUrl } } = supabase.storage.from('videos').getPublicUrl(fileName);
             await updateJobStatus(jobId, { status: 'completed', stage: 'done', progress: 100, videoUrl: publicUrl });
         }
-    } catch (error) {
-        console.error("Video processing error:", error);
-        await updateJobStatus(jobId, { status: "failed", error: error.message });
     } finally {
         await fs.remove(jobWorkDir).catch(() => {});
     }
 }
+
+// --- HELPER WRAPPERS ---
 
 async function renderCinematicScene(asset, outputPath) {
     const duration = asset.duration || 5;
     const zoompan = `zoompan=z='min(zoom+0.0015,1.5)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${duration*30}:s=1080x1920`;
     return new Promise((resolve, reject) => {
         const args = ["-loop", "1", "-i", asset.imgPath, "-i", asset.audPath, "-filter_complex", `[0:v]scale=iw*2:ih*2,${zoompan},format=yuv420p[v];[1:a]loudnorm[a]`, "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", "30", "-t", duration.toString(), "-c:a", "aac", "-shortest", "-y", outputPath];
-        spawn('ffmpeg', args).on('close', (code) => code === 0 ? resolve() : reject(new Error("FFMPEG failed")));
+        const proc = spawn('ffmpeg', args);
+        proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`FFMPEG failed with code ${code}`)));
     });
 }
 
@@ -166,7 +183,8 @@ async function mergeScenes(videos, outputPath, workDir) {
     const listFile = path.resolve(workDir, 'list.txt');
     fs.writeFileSync(listFile, videos.map(v => `file '${path.resolve(v).replace(/\\/g, '/')}'`).join('\n'));
     return new Promise((resolve, reject) => {
-        spawn('ffmpeg', ["-f", "concat", "-safe", "0", "-i", listFile, "-c", "copy", "-y", outputPath]).on('close', (code) => code === 0 ? resolve() : reject(new Error("Merge failed")));
+        const proc = spawn('ffmpeg', ["-f", "concat", "-safe", "0", "-i", listFile, "-c", "copy", "-y", outputPath]);
+        proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`Merge failed with code ${code}`)));
     });
 }
 
@@ -182,7 +200,7 @@ async function generateVideoScript(prompt) {
 
 async function generateImage(visual, outputPath) {
     const response = await openai.images.generate({ model: "dall-e-3", prompt: `Cinematic 9:16 portrait: ${visual}`, size: "1024x1792" });
-    const res = await axios.get(response.data[0].url, { responseType: 'arraybuffer' });
+    const res = await axios.get(response.data[0].url, { responseType: 'arraybuffer', timeout: 30000 });
     await fs.writeFile(outputPath, Buffer.from(res.data));
 }
 

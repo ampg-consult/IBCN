@@ -28,7 +28,7 @@ class MediaGenerationService @Inject constructor(
 ) {
     private val TAG = "MediaGenerationService"
     
-    // FORCED PRODUCTION URL (Railway)
+    // Production Railway URL
     private val videoEngineUrl = "https://ibcn-production-03ab.up.railway.app"
 
     suspend fun generateAIJob(type: String, prompt: String, assetId: String? = null): Result<String> {
@@ -49,10 +49,7 @@ class MediaGenerationService @Inject constructor(
 
             val responseBody = withContext(Dispatchers.IO) {
                 okHttpClient.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        val err = response.body?.string() ?: "Unknown error"
-                        throw Exception("Engine Error ${response.code}: $err")
-                    }
+                    if (!response.isSuccessful) throw Exception("Engine error: ${response.code}")
                     response.body?.string() ?: ""
                 }
             }
@@ -71,7 +68,7 @@ class MediaGenerationService @Inject constructor(
             }
             Result.success(serverJobId)
         } catch (e: Exception) {
-            Log.e(TAG, "AI Job failed: ${e.message}")
+            Log.e(TAG, "AI Job start failed: ${e.message}")
             Result.failure(e)
         }
     }
@@ -88,7 +85,6 @@ class MediaGenerationService @Inject constructor(
             } ?: return@withContext null
             
             val json = JSONObject(responseBody)
-            
             JobStatusUpdate(
                 status = json.optString("status"),
                 stage = json.optString("stage"),
@@ -97,26 +93,8 @@ class MediaGenerationService @Inject constructor(
                 error = if (json.isNull("error")) null else json.optString("error")
             )
         } catch (e: Exception) {
-            Log.e(TAG, "Polling failed for $jobId: ${e.message}")
+            Log.e(TAG, "Status check failed: ${e.message}")
             null
-        }
-    }
-
-    /**
-     * Legacy compatibility wrapper
-     */
-    suspend fun generateViralMedia(assetId: String, title: String, description: String): Result<ViralVideoMetadata> {
-        val result = generateAIJob("video", "$title: $description", assetId)
-        return if (result.isSuccess) {
-            val jobId = result.getOrNull() ?: ""
-            Result.success(ViralVideoMetadata(
-                id = jobId,
-                assetId = assetId,
-                status = MediaStatus.GENERATING,
-                caption = "Generating video..."
-            ))
-        } else {
-            Result.failure(result.exceptionOrNull() ?: Exception("Video generation failed"))
         }
     }
 
@@ -133,10 +111,8 @@ class MediaGenerationService @Inject constructor(
     suspend fun getMediaForAsset(assetId: String): ViralVideoMetadata? {
         val uid = auth.currentUser?.uid ?: return null
         return try {
-            firestore.collection("users").document(uid)
-                .collection("videos")
-                .whereEqualTo("assetId", assetId)
-                .limit(1).get().await()
+            firestore.collection("users").document(uid).collection("videos")
+                .whereEqualTo("assetId", assetId).limit(1).get().await()
                 .toObjects(ViralVideoMetadata::class.java).firstOrNull()
         } catch (e: Exception) { null }
     }
@@ -144,18 +120,12 @@ class MediaGenerationService @Inject constructor(
     suspend fun trackShare(mediaId: String, platform: String) {
         val uid = auth.currentUser?.uid ?: return
         try {
-            val ref = firestore.collection("users").document(uid)
-                .collection("videos").document(mediaId)
-                .collection("metrics").document("shares")
-            
-            firestore.runTransaction { transaction ->
-                val snapshot = transaction.get(ref)
-                if (!snapshot.exists()) {
-                    transaction.set(ref, mapOf(platform to 1))
-                } else {
-                    val count = snapshot.getLong(platform) ?: 0L
-                    transaction.update(ref, platform, count + 1)
-                }
+            val ref = firestore.collection("users").document(uid).collection("videos")
+                .document(mediaId).collection("metrics").document("shares")
+            firestore.runTransaction { tx ->
+                val snap = tx.get(ref)
+                if (!snap.exists()) tx.set(ref, mapOf(platform to 1))
+                else tx.update(ref, platform, (snap.getLong(platform) ?: 0L) + 1)
             }.await()
         } catch (e: Exception) { Log.e(TAG, "Track share error: ${e.message}") }
     }

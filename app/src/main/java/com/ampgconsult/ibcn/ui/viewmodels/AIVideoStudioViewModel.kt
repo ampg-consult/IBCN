@@ -49,6 +49,7 @@ class AIVideoStudioViewModel @Inject constructor(
 
     fun generateVideo(prompt: String) {
         viewModelScope.launch {
+            // UNIFIED STARTING MESSAGE
             _uiState.value = VideoStudioStatus.Generating("AI Director crafting script...", 10)
             _isListedInMarketplace.value = false
             
@@ -80,7 +81,7 @@ class AIVideoStudioViewModel @Inject constructor(
             var isPolling = true
             var retryCount = 0
             
-            while (isPolling && retryCount < 60) { // Timeout after ~3 mins
+            while (isPolling && retryCount < 60) {
                 delay(3000)
                 val statusUpdate = mediaGenerationService.getJobStatus(jobId)
                 
@@ -89,18 +90,17 @@ class AIVideoStudioViewModel @Inject constructor(
                     continue
                 }
 
-                Log.d("AIVideoStudio", "Job Status: ${statusUpdate.status} - ${statusUpdate.progress}%")
-
                 when (statusUpdate.status?.lowercase()) {
                     "processing", "queued", "generating" -> {
+                        // UNIFIED POLLING MESSAGES
                         val displayStatusText = when (statusUpdate.stage?.lowercase()) {
-                            "script" -> "AI Product Manager crafting script..."
+                            "script" -> "AI Director crafting script..."
                             "image" -> "Generating cinematic visuals..."
                             "audio" -> "Synthesizing AI voiceover..."
                             "rendering" -> "Rendering cinematic frames..."
                             "merging" -> "Finalizing production..."
                             "uploading" -> "Securing to cloud storage..."
-                            else -> "Production in progress..."
+                            else -> "AI Director producing video..."
                         }
                         _uiState.value = VideoStudioStatus.Generating(displayStatusText, statusUpdate.progress)
                     }
@@ -110,7 +110,7 @@ class AIVideoStudioViewModel @Inject constructor(
                             val finalMedia = _generatedVideo.value?.copy(
                                 status = MediaStatus.READY,
                                 videoUrl = videoUrl,
-                                caption = "Video generated successfully!"
+                                caption = "Video ready!"
                             ) ?: ViralVideoMetadata(
                                 id = jobId,
                                 assetId = assetId,
@@ -132,10 +132,7 @@ class AIVideoStudioViewModel @Inject constructor(
                     }
                 }
             }
-            
-            if (retryCount >= 60) {
-                _uiState.value = VideoStudioStatus.Error("Connection timed out. Check your network.")
-            }
+            if (retryCount >= 60) _uiState.value = VideoStudioStatus.Error("Connection timed out.")
         }
     }
 
@@ -143,7 +140,6 @@ class AIVideoStudioViewModel @Inject constructor(
         val video = _generatedVideo.value ?: return
         if (video.videoUrl.isEmpty()) return
         
-        val uid = auth.currentUser?.uid ?: return
         firestore.collection("marketplace_assets")
             .whereEqualTo("assetUrl", video.videoUrl)
             .addSnapshotListener { snapshot, _ ->
@@ -181,9 +177,7 @@ class AIVideoStudioViewModel @Inject constructor(
         }
     }
 
-    fun sellVideo() {
-        // Implement marketplace listing logic if needed
-    }
+    fun sellVideo() {}
 
     override fun onCleared() {
         pollingJob?.cancel()

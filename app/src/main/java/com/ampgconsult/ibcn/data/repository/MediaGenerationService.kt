@@ -1,7 +1,6 @@
 package com.ampgconsult.ibcn.data.repository
 
 import android.content.Context
-import android.os.Build
 import android.util.Log
 import com.ampgconsult.ibcn.data.models.*
 import com.google.firebase.auth.FirebaseAuth
@@ -29,18 +28,8 @@ class MediaGenerationService @Inject constructor(
 ) {
     private val TAG = "MediaGenerationService"
     
-    // AUTO-ENVIRONMENT DETECTION
-    private val videoEngineUrl: String by lazy {
-        val isEmulator = Build.FINGERPRINT.contains("generic") || 
-                         Build.MODEL.contains("Emulator") || 
-                         Build.DEVICE.contains("generic")
-        
-        if (isEmulator) {
-            "http://10.0.2.2:8081" // Local testing
-        } else {
-            "https://ibcn-production-03ab.up.railway.app" // Production
-        }
-    }
+    // FORCED PRODUCTION URL (Railway)
+    private val videoEngineUrl = "https://ibcn-production-03ab.up.railway.app"
 
     suspend fun generateAIJob(type: String, prompt: String, assetId: String? = null): Result<String> {
         val uid = auth.currentUser?.uid ?: return Result.failure(Exception("Please log in"))
@@ -60,7 +49,10 @@ class MediaGenerationService @Inject constructor(
 
             val responseBody = withContext(Dispatchers.IO) {
                 okHttpClient.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) throw Exception("Engine error: ${response.code}")
+                    if (!response.isSuccessful) {
+                        val err = response.body?.string() ?: "Unknown error"
+                        throw Exception("Engine Error ${response.code}: $err")
+                    }
                     response.body?.string() ?: ""
                 }
             }
@@ -84,8 +76,34 @@ class MediaGenerationService @Inject constructor(
         }
     }
 
+    suspend fun getJobStatus(jobId: String): JobStatusUpdate? = withContext(Dispatchers.IO) {
+        try {
+            val request = Request.Builder()
+                .url("$videoEngineUrl/status/$jobId")
+                .header("Cache-Control", "no-cache")
+                .build()
+            
+            val responseBody = okHttpClient.newCall(request).execute().use { 
+                if (it.isSuccessful) it.body?.string() else null 
+            } ?: return@withContext null
+            
+            val json = JSONObject(responseBody)
+            
+            JobStatusUpdate(
+                status = json.optString("status"),
+                stage = json.optString("stage"),
+                progress = json.optInt("progress"),
+                videoUrl = if (json.isNull("videoUrl")) null else json.optString("videoUrl"),
+                error = if (json.isNull("error")) null else json.optString("error")
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Polling failed for $jobId: ${e.message}")
+            null
+        }
+    }
+
     /**
-     * Legacy compatibility wrapper for existing business logic components.
+     * Legacy compatibility wrapper
      */
     suspend fun generateViralMedia(assetId: String, title: String, description: String): Result<ViralVideoMetadata> {
         val result = generateAIJob("video", "$title: $description", assetId)
@@ -100,26 +118,6 @@ class MediaGenerationService @Inject constructor(
         } else {
             Result.failure(result.exceptionOrNull() ?: Exception("Video generation failed"))
         }
-    }
-
-    suspend fun getJobStatus(jobId: String): JobStatusUpdate? = withContext(Dispatchers.IO) {
-        try {
-            val request = Request.Builder()
-                .url("$videoEngineUrl/status/$jobId")
-                .header("Cache-Control", "no-cache")
-                .build()
-            
-            val responseBody = okHttpClient.newCall(request).execute().use { it.body?.string() } ?: return@withContext null
-            val json = JSONObject(responseBody)
-            
-            JobStatusUpdate(
-                status = json.optString("status"),
-                stage = json.optString("stage"),
-                progress = json.optInt("progress"),
-                videoUrl = json.optString("videoUrl", null), // Consistent camelCase
-                error = json.optString("error", null)
-            )
-        } catch (e: Exception) { null }
     }
 
     suspend fun saveMediaToFirestore(media: ViralVideoMetadata) {
@@ -159,8 +157,6 @@ class MediaGenerationService @Inject constructor(
                     transaction.update(ref, platform, count + 1)
                 }
             }.await()
-        } catch (e: Exception) {
-            Log.e(TAG, "Error tracking share: ${e.message}")
-        }
+        } catch (e: Exception) { Log.e(TAG, "Track share error: ${e.message}") }
     }
 }

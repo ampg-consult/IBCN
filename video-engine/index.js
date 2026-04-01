@@ -1,14 +1,15 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { createClient } = require('@supabase/supabase-js');
-const Redis = require('ioredis');
-const { v4: uuidv4 } = require('uuid');
+const dns = require('node:dns');
+
+// DEVOPS FIX: Force IPv4 to prevent cloud connection errors
+try { dns.setDefaultResultOrder('ipv4first'); } catch (e) {}
 
 const app = express();
 const PORT = process.env.PORT || 8081;
 
-process.on('uncaughtException', (err) => console.error('💥 UNCAUGHT EXCEPTION:', err.stack || err));
+process.on('uncaughtException', (err) => console.error('💥 UNCAUGHT EXCEPTION:', err));
 process.on('unhandledRejection', (reason) => console.error('💥 UNHANDLED REJECTION:', reason));
 
 app.use(cors({ origin: "*" }));
@@ -18,6 +19,9 @@ let supabase;
 let redis;
 
 try {
+    const { createClient } = require('@supabase/supabase-js');
+    const Redis = require('ioredis');
+    
     if (process.env.SUPABASE_URL && process.env.SUPABASE_KEY) {
         supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
         console.log("✅ Supabase Initialized");
@@ -31,7 +35,7 @@ try {
 }
 
 app.get('/health', (req, res) => res.status(200).json({ status: "ok", redis: !!redis, supabase: !!supabase }));
-app.get('/', (req, res) => res.json({ status: "IBCN Video Engine Live", version: "1.1" }));
+app.get('/', (req, res) => res.json({ status: "IBCN Video Engine Live", version: "1.3" }));
 
 app.post('/generate-video', async (req, res) => {
     const { videoQueue } = require('./queue');
@@ -39,7 +43,7 @@ app.post('/generate-video', async (req, res) => {
     
     if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
     
-    const jobId = requestedJobId || uuidv4();
+    const jobId = requestedJobId || require('uuid').v4();
     const uid = userId || 'anonymous';
     
     try {
@@ -48,7 +52,7 @@ app.post('/generate-video', async (req, res) => {
             user_id: uid,
             prompt,
             status: 'processing',
-            progress: 10, // Match frontend starting state
+            progress: 10, // Initialize at 10% to match frontend
             stage: 'script',
             created_at: new Date().toISOString()
         };
@@ -95,7 +99,7 @@ app.get('/status/:jobId', async (req, res) => {
         if (!job) return res.status(404).json({ error: 'Job not found' });
         
         res.json({
-            status: job.status,
+            status: job.status?.toLowerCase() === 'ready' ? 'completed' : job.status,
             progress: job.progress || 0,
             stage: job.stage || 'working',
             videoUrl: job.videoUrl || null,

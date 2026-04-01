@@ -1,5 +1,6 @@
 package com.ampgconsult.ibcn.ui.viewmodels
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ampgconsult.ibcn.data.models.*
@@ -13,6 +14,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -32,22 +34,22 @@ class AIVideoStudioViewModel @Inject constructor(
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<VideoStudioStatus>(VideoStudioStatus.Idle)
-    val uiState: StateFlow<VideoStudioStatus> = _uiState
+    val uiState: StateFlow<VideoStudioStatus> = _uiState.asStateFlow()
 
     private val _generatedVideo = MutableStateFlow<ViralVideoMetadata?>(null)
-    val generatedVideo: StateFlow<ViralVideoMetadata?> = _generatedVideo
+    val generatedVideo: StateFlow<ViralVideoMetadata?> = _generatedVideo.asStateFlow()
 
     private val _viralOptimization = MutableStateFlow<ViralOptimization?>(null)
-    val viralOptimization: StateFlow<ViralOptimization?> = _viralOptimization
+    val viralOptimization: StateFlow<ViralOptimization?> = _viralOptimization.asStateFlow()
 
     private val _isListedInMarketplace = MutableStateFlow(false)
-    val isListedInMarketplace: StateFlow<Boolean> = _isListedInMarketplace
+    val isListedInMarketplace: StateFlow<Boolean> = _isListedInMarketplace.asStateFlow()
 
     private var pollingJob: Job? = null
 
     fun generateVideo(prompt: String) {
         viewModelScope.launch {
-            _uiState.value = VideoStudioStatus.Generating("AI Director crafting script...", 0)
+            _uiState.value = VideoStudioStatus.Generating("AI Director crafting script...", 10)
             _isListedInMarketplace.value = false
             
             val assetId = "custom_video_${System.currentTimeMillis()}"
@@ -76,37 +78,45 @@ class AIVideoStudioViewModel @Inject constructor(
         pollingJob?.cancel()
         pollingJob = viewModelScope.launch {
             var isPolling = true
-            while (isPolling) {
+            var retryCount = 0
+            
+            while (isPolling && retryCount < 60) { // Timeout after ~3 mins
                 delay(3000)
                 val statusUpdate = mediaGenerationService.getJobStatus(jobId)
                 
-                if (statusUpdate == null) continue
+                if (statusUpdate == null) {
+                    retryCount++
+                    continue
+                }
 
-                when (statusUpdate.status) {
-                    "processing", "queued", "GENERATING" -> {
-                        val displayStatusText = when (statusUpdate.stage) {
-                            "script" -> "AI Director crafting script..."
+                Log.d("AIVideoStudio", "Job Status: ${statusUpdate.status} - ${statusUpdate.progress}%")
+
+                when (statusUpdate.status?.lowercase()) {
+                    "processing", "queued", "generating" -> {
+                        val displayStatusText = when (statusUpdate.stage?.lowercase()) {
+                            "script" -> "AI Product Manager crafting script..."
                             "image" -> "Generating cinematic visuals..."
                             "audio" -> "Synthesizing AI voiceover..."
                             "rendering" -> "Rendering cinematic frames..."
                             "merging" -> "Finalizing production..."
                             "uploading" -> "Securing to cloud storage..."
-                            else -> "Processing..."
+                            else -> "Production in progress..."
                         }
                         _uiState.value = VideoStudioStatus.Generating(displayStatusText, statusUpdate.progress)
                     }
-                    "completed" -> {
+                    "completed", "ready" -> {
                         val videoUrl = statusUpdate.videoUrl ?: ""
                         if (videoUrl.isNotEmpty()) {
                             val finalMedia = _generatedVideo.value?.copy(
                                 status = MediaStatus.READY,
                                 videoUrl = videoUrl,
-                                caption = "Video ready!"
+                                caption = "Video generated successfully!"
                             ) ?: ViralVideoMetadata(
                                 id = jobId,
                                 assetId = assetId,
                                 videoUrl = videoUrl,
-                                status = MediaStatus.READY
+                                status = MediaStatus.READY,
+                                caption = "Video ready!"
                             )
                             
                             _generatedVideo.value = finalMedia
@@ -121,6 +131,10 @@ class AIVideoStudioViewModel @Inject constructor(
                         isPolling = false
                     }
                 }
+            }
+            
+            if (retryCount >= 60) {
+                _uiState.value = VideoStudioStatus.Error("Connection timed out. Check your network.")
             }
         }
     }
@@ -167,10 +181,12 @@ class AIVideoStudioViewModel @Inject constructor(
         }
     }
 
+    fun sellVideo() {
+        // Implement marketplace listing logic if needed
+    }
+
     override fun onCleared() {
         pollingJob?.cancel()
         super.onCleared()
     }
-
-    fun sellVideo() { }
 }

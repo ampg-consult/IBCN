@@ -1,6 +1,7 @@
 package com.ampgconsult.ibcn.data.repository
 
 import android.content.Context
+import android.os.Build
 import android.util.Log
 import com.ampgconsult.ibcn.data.models.*
 import com.google.firebase.auth.FirebaseAuth
@@ -28,13 +29,19 @@ class MediaGenerationService @Inject constructor(
 ) {
     private val TAG = "MediaGenerationService"
     
-    // Using api.ibcn.site as primary, falling back to Railway domain if needed
-    private val videoEngineUrl = "https://api.ibcn.site" 
+    // AUTO-ENVIRONMENT DETECTION
+    private val videoEngineUrl: String by lazy {
+        val isEmulator = Build.FINGERPRINT.contains("generic") || 
+                         Build.MODEL.contains("Emulator") || 
+                         Build.DEVICE.contains("generic")
+        
+        if (isEmulator) {
+            "http://10.0.2.2:8081" // Local testing
+        } else {
+            "https://ibcn-production-03ab.up.railway.app" // Production
+        }
+    }
 
-    /**
-     * Unified entry point for all AI Jobs (Video, Launchpad, etc.)
-     * Returns the jobId confirmed by the server.
-     */
     suspend fun generateAIJob(type: String, prompt: String, assetId: String? = null): Result<String> {
         val uid = auth.currentUser?.uid ?: return Result.failure(Exception("Please log in"))
         return try {
@@ -46,22 +53,14 @@ class MediaGenerationService @Inject constructor(
             }
 
             val body = payload.toString().toRequestBody("application/json".toMediaType())
-            val finalUrl = "$videoEngineUrl/generate-$type"
-            
-            Log.d(TAG, "Requesting AI Job: $finalUrl")
-
             val request = Request.Builder()
-                .url(finalUrl)
+                .url("$videoEngineUrl/generate-$type")
                 .post(body)
                 .build()
 
             val responseBody = withContext(Dispatchers.IO) {
                 okHttpClient.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        val err = response.body?.string() ?: ""
-                        Log.e(TAG, "Server Error ${response.code}: $err")
-                        throw Exception("Engine error: ${response.code}")
-                    }
+                    if (!response.isSuccessful) throw Exception("Engine error: ${response.code}")
                     response.body?.string() ?: ""
                 }
             }
@@ -103,10 +102,6 @@ class MediaGenerationService @Inject constructor(
         }
     }
 
-    /**
-     * Authoritative job status polling.
-     * Uses JobStatusUpdate from com.ampgconsult.ibcn.data.models
-     */
     suspend fun getJobStatus(jobId: String): JobStatusUpdate? = withContext(Dispatchers.IO) {
         try {
             val request = Request.Builder()
@@ -114,56 +109,27 @@ class MediaGenerationService @Inject constructor(
                 .header("Cache-Control", "no-cache")
                 .build()
             
-            val responseBody = okHttpClient.newCall(request).execute().use { response ->
-                if (response.isSuccessful) response.body?.string() else null
-            } ?: return@withContext null
-
+            val responseBody = okHttpClient.newCall(request).execute().use { it.body?.string() } ?: return@withContext null
             val json = JSONObject(responseBody)
             
-            // Map the result JSONObject to a Map for compatibility with our global model
-            val resultMap = mutableMapOf<String, Any>()
-            json.optJSONObject("result")?.let { res ->
-                val keys = res.keys()
-                while(keys.hasNext()) {
-                    val key = keys.next()
-                    resultMap[key] = res.get(key)
-                }
-            }
-
             JobStatusUpdate(
                 status = json.optString("status"),
                 stage = json.optString("stage"),
                 progress = json.optInt("progress"),
-                videoUrl = if (json.isNull("videoUrl")) null else json.optString("videoUrl"),
-                result = if (resultMap.isEmpty()) null else resultMap,
-                error = if (json.isNull("error")) null else json.optString("error")
+                videoUrl = json.optString("videoUrl", null), // Consistent camelCase
+                error = json.optString("error", null)
             )
-        } catch (e: Exception) { 
-            Log.e(TAG, "Status check error: ${e.message}")
-            null 
-        }
+        } catch (e: Exception) { null }
     }
 
     suspend fun saveMediaToFirestore(media: ViralVideoMetadata) {
         val uid = auth.currentUser?.uid ?: return
         try {
-            val updateData = hashMapOf(
-                "id" to media.id,
-                "assetId" to media.assetId,
-                "videoUrl" to media.videoUrl,
-                "thumbnailUrl" to media.thumbnailUrl,
-                "caption" to media.caption,
-                "hashtags" to media.hashtags,
-                "status" to media.status.name,
-                "createdAt" to media.createdAt
-            )
             firestore.collection("users").document(uid)
                 .collection("videos").document(media.id)
-                .set(updateData)
+                .set(media)
                 .await()
-        } catch (e: Exception) {
-            Log.e(TAG, "Firestore save error: ${e.message}")
-        }
+        } catch (e: Exception) { Log.e(TAG, "Firestore error: ${e.message}") }
     }
 
     suspend fun getMediaForAsset(assetId: String): ViralVideoMetadata? {

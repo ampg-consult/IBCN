@@ -49,8 +49,8 @@ class AIVideoStudioViewModel @Inject constructor(
 
     fun generateVideo(prompt: String) {
         viewModelScope.launch {
-            // UNIFIED STARTING MESSAGE
-            _uiState.value = VideoStudioStatus.Generating("AI Director crafting script...", 10)
+            // INITIAL STATE (Requirement: 10% Script)
+            _uiState.value = VideoStudioStatus.Generating("Generating script...", 10)
             _isListedInMarketplace.value = false
             
             val assetId = "custom_video_${System.currentTimeMillis()}"
@@ -68,97 +68,71 @@ class AIVideoStudioViewModel @Inject constructor(
                     caption = "Initializing..."
                 )
                 _generatedVideo.value = initialMedia
-                pollVideoStatus(jobId, assetId)
+                pollJob(jobId, assetId)
             }.onFailure { error ->
                 _uiState.value = VideoStudioStatus.Error(error.message ?: "Failed to start generation")
             }
         }
     }
 
-    private fun pollVideoStatus(jobId: String, assetId: String) {
+    private fun pollJob(jobId: String, assetId: String) {
         pollingJob?.cancel()
         pollingJob = viewModelScope.launch {
-            var isPolling = true
-            var retryCount = 0
-            
-            while (isPolling && retryCount < 60) {
-                delay(3000)
-                val statusUpdate = mediaGenerationService.getJobStatus(jobId)
+            while (true) {
+                delay(2000) // Poll every 2 seconds as requested
+                val response = mediaGenerationService.getJobStatus(jobId)
                 
-                if (statusUpdate == null) {
-                    retryCount++
-                    continue
-                }
+                if (response == null) continue
 
-                when (statusUpdate.status?.lowercase()) {
-                    "processing", "queued", "generating" -> {
-                        // UNIFIED POLLING MESSAGES
-                        val displayStatusText = when (statusUpdate.stage?.lowercase()) {
-                            "script" -> "AI Director crafting script..."
-                            "image" -> "Generating cinematic visuals..."
-                            "audio" -> "Synthesizing AI voiceover..."
-                            "rendering" -> "Rendering cinematic frames..."
-                            "merging" -> "Finalizing production..."
-                            "uploading" -> "Securing to cloud storage..."
-                            else -> "AI Director producing video..."
-                        }
-                        _uiState.value = VideoStudioStatus.Generating(displayStatusText, statusUpdate.progress)
-                    }
-                    "completed", "ready" -> {
-                        val videoUrl = statusUpdate.videoUrl ?: ""
+                Log.d("VIDEO_STATUS", response.toString())
+
+                when (response.status?.lowercase()) {
+                    "completed" -> {
+                        val videoUrl = response.videoUrl ?: ""
                         if (videoUrl.isNotEmpty()) {
-                            val finalMedia = _generatedVideo.value?.copy(
-                                status = MediaStatus.READY,
-                                videoUrl = videoUrl,
-                                caption = "Video ready!"
-                            ) ?: ViralVideoMetadata(
+                            val finalMedia = ViralVideoMetadata(
                                 id = jobId,
                                 assetId = assetId,
                                 videoUrl = videoUrl,
                                 status = MediaStatus.READY,
-                                caption = "Video ready!"
+                                caption = "Completed 🎬"
                             )
-                            
                             _generatedVideo.value = finalMedia
                             _uiState.value = VideoStudioStatus.Completed
                             mediaGenerationService.saveMediaToFirestore(finalMedia)
-                            checkMarketplaceListing()
-                            isPolling = false
+                            break // Stop polling
                         }
                     }
                     "failed" -> {
-                        _uiState.value = VideoStudioStatus.Error(statusUpdate.error ?: "Generation failed")
-                        isPolling = false
+                        _uiState.value = VideoStudioStatus.Error(response.error ?: "Generation failed")
+                        break // Stop polling
+                    }
+                    else -> {
+                        // DYNAMIC STAGE MAPPING
+                        val displayStatusText = when (response.stage?.lowercase()) {
+                            "script" -> "Generating script..."
+                            "image" -> "Creating visuals..."
+                            "audio" -> "Generating voice..."
+                            "rendering" -> "Rendering video..."
+                            "merging" -> "Finalizing video..."
+                            "uploading" -> "Uploading..."
+                            "done" -> "Completed 🎬"
+                            else -> "Processing..."
+                        }
+                        _uiState.value = VideoStudioStatus.Generating(displayStatusText, response.progress)
                     }
                 }
             }
-            if (retryCount >= 60) _uiState.value = VideoStudioStatus.Error("Connection timed out.")
         }
-    }
-
-    private fun checkMarketplaceListing() {
-        val video = _generatedVideo.value ?: return
-        if (video.videoUrl.isEmpty()) return
-        
-        firestore.collection("marketplace_assets")
-            .whereEqualTo("assetUrl", video.videoUrl)
-            .addSnapshotListener { snapshot, _ ->
-                if (snapshot != null && !snapshot.isEmpty) {
-                    _isListedInMarketplace.value = true
-                }
-            }
     }
 
     fun makeViral() {
         val video = _generatedVideo.value ?: return
         viewModelScope.launch {
             _uiState.value = VideoStudioStatus.Generating("Growth AI optimizing for virality...", 50)
-            val result = viralDistributionService.optimizeForVirality(video)
-            result.onSuccess { optimization ->
-                _viralOptimization.value = optimization
+            viralDistributionService.optimizeForVirality(video).onSuccess {
+                _viralOptimization.value = it
                 _uiState.value = VideoStudioStatus.Completed
-            }.onFailure { error ->
-                _uiState.value = VideoStudioStatus.Error(error.message ?: "Viral optimization failed")
             }
         }
     }
@@ -166,18 +140,11 @@ class AIVideoStudioViewModel @Inject constructor(
     fun schedulePost(platform: SocialPlatform) {
         val video = _generatedVideo.value ?: return
         viewModelScope.launch {
-            _uiState.value = VideoStudioStatus.Generating("Scheduling post for ${platform.name}...", 80)
-            val scheduledTime = Timestamp(System.currentTimeMillis() / 1000 + 3600, 0)
-            val result = viralDistributionService.schedulePost(video.id, platform, scheduledTime)
-            result.onSuccess {
+            viralDistributionService.schedulePost(video.id, platform, Timestamp.now()).onSuccess {
                 _uiState.value = VideoStudioStatus.Completed
-            }.onFailure { error ->
-                _uiState.value = VideoStudioStatus.Error(error.message ?: "Scheduling failed")
             }
         }
     }
-
-    fun sellVideo() {}
 
     override fun onCleared() {
         pollingJob?.cancel()

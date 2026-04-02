@@ -34,16 +34,8 @@ try {
     console.error("Client Init Error:", e.message);
 }
 
-// 1. Root Route
-app.get("/", (req, res) => { 
-    res.json({ 
-        status: "IBCN Video Engine Live", 
-        version: "1.0", 
-        endpoints: [ "/generate-video", "/status/:jobId", "/video/:jobId" ] 
-    }); 
-});
-
 app.get('/health', (req, res) => res.status(200).json({ status: "ok", redis: !!redis, supabase: !!supabase }));
+app.get('/', (req, res) => res.json({ status: "IBCN Video Engine Live", version: "1.4" }));
 
 app.post('/generate-video', async (req, res) => {
     const { videoQueue } = require('./queue');
@@ -59,18 +51,18 @@ app.post('/generate-video', async (req, res) => {
             id: jobId,
             user_id: uid,
             prompt,
-            status: 'processing',
-            progress: 10,
-            stage: 'script',
+            status: 'queued',
+            progress: 0,
+            stage: 'queued',
             created_at: new Date().toISOString()
         };
 
         if (supabase) await supabase.from('Video_jobs').upsert(initialData);
         if (redis) {
             await redis.set(`job:${jobId}`, JSON.stringify({
-                status: 'processing',
-                progress: 10,
-                stage: 'script',
+                status: 'queued',
+                progress: 0,
+                stage: 'queued',
                 videoUrl: null
             }), 'EX', 3600);
         }
@@ -106,22 +98,26 @@ app.get('/status/:jobId', async (req, res) => {
         
         if (!job) return res.status(404).json({ error: 'Job not found' });
         
-        // Ensure standardized response
-        const response = {
-            status: (job.status === 'READY' || job.status === 'done') ? 'completed' : job.status,
+        // STANDARDIZE STATUS (STEP 1 & 3)
+        let status = job.status?.toLowerCase();
+        if (status === 'ready' || status === 'done' || status === 'success') {
+            status = 'completed';
+        }
+
+        res.json({
+            jobId: jobId,
+            status: status || 'processing',
             progress: job.progress || 0,
             stage: job.stage || 'working',
-            videoUrl: job.videoUrl || null,
-            error: job.error || null
-        };
-        
-        res.json(response);
+            videoUrl: status === 'completed' ? job.videoUrl : null,
+            error: status === 'failed' ? job.error : null
+        });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
 app.listen(PORT, "0.0.0.0", () => {
-    console.log(`🚀 Server running on ${PORT}`);
+    console.log(`🚀 IBCN AI ENGINE ACTIVE ON PORT ${PORT}`);
     require('./worker');
 });

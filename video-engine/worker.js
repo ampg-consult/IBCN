@@ -20,7 +20,7 @@ const { connection } = require('./queue');
 
 console.log("🛠️ Worker Module Loading...");
 
-// 1. Initialize OpenAI with extended timeout
+// 1. Initialize OpenAI
 let openai;
 if (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.startsWith('sk-')) {
     try {
@@ -35,7 +35,7 @@ if (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.startsWith('sk-')) 
     }
 }
 
-// 2. Persistent Redis Client
+// 2. Persistent Redis Client for status updates
 const statusRedis = process.env.REDIS_URL ? new Redis(process.env.REDIS_URL, { maxRetriesPerRequest: null }) : null;
 
 // 3. Initialize Supabase
@@ -48,28 +48,32 @@ const TEMP_DIR = path.resolve(__dirname, 'storage', 'temp');
 const OUTPUT_DIR = path.resolve(__dirname, 'storage', 'output');
 
 /**
- * Real-time Status Updater
+ * Robust Status Updater - Standardized for completed status
  */
 async function updateJobStatus(jobId, updateData) {
     const status = updateData.status || 'processing';
     const stage = updateData.stage || 'working';
     const progress = updateData.progress || 0;
     
-    console.log(`[JOB ${jobId}] ${stage}: ${progress}% - ${status}`);
+    console.log(`JOB UPDATE: ${jobId} - ${stage}: ${progress}% - ${status}`);
 
     const payload = {
-        status, stage, progress,
+        status: status === 'READY' || status === 'done' ? 'completed' : status,
+        stage, 
+        progress,
         videoUrl: updateData.videoUrl || null,
         error: updateData.error || null,
         updated_at: new Date().toISOString()
     };
 
+    // Update Redis Cache
     if (statusRedis) {
         try {
             await statusRedis.set(`job:${jobId}`, JSON.stringify(payload), 'EX', 3600);
-        } catch (e) { console.error("Redis update failed:", e.message); }
+        } catch (e) { console.error("Redis sync failed:", e.message); }
     }
 
+    // Update Supabase DB
     if (supabase) {
         try {
             await supabase.from(JOBS_TABLE).update({
@@ -80,30 +84,34 @@ async function updateJobStatus(jobId, updateData) {
                 error: payload.error,
                 updated_at: payload.updated_at
             }).eq('id', jobId);
-        } catch (e) { console.error("Supabase update failed:", e.message); }
+        } catch (e) { console.error("Supabase sync failed:", e.message); }
     }
     
-    if (status === 'completed') {
-        console.log("🏁 FINAL JOB DATA:", payload);
+    if (payload.status === 'completed') {
+        console.log("🏁 FINAL JOB DATA:", jobId, payload);
     }
 }
 
 // 4. Initialize the Worker
 const worker = new Worker('video-generation', async job => {
     if (!openai) throw new Error("OpenAI API Key is missing or invalid.");
+    
     const { jobId, prompt, userId, type } = job.data;
+    console.log(`🚀 Processing ${type} job: ${jobId}`);
     
     try {
         if (type === 'video') await processVideo(jobId, prompt, userId);
         else if (type === 'launchpad') await processLaunchpad(jobId, prompt, userId);
     } catch (err) {
-        console.error(`💥 Job ${jobId} failed:`, err);
+        console.error(`💥 Fatal error in job ${jobId}:`, err);
         await updateJobStatus(jobId, { status: "failed", error: err.message, stage: 'failed' });
     }
 }, { 
     connection,
     concurrency: 1 
 });
+
+// --- AI PIPELINES ---
 
 async function processVideo(jobId, prompt, userId) {
     const jobWorkDir = path.resolve(TEMP_DIR, jobId);
@@ -113,7 +121,7 @@ async function processVideo(jobId, prompt, userId) {
         await fs.ensureDir(jobWorkDir);
         await fs.ensureDir(OUTPUT_DIR);
         
-        // Stage 1: Script (10%)
+        // 1. Script Stage
         await updateJobStatus(jobId, { stage: 'script', progress: 10 });
         const scriptData = await generateVideoScript(prompt);
         
@@ -122,18 +130,18 @@ async function processVideo(jobId, prompt, userId) {
             const imgPath = path.resolve(jobWorkDir, `img_${i}.png`);
             const audPath = path.resolve(jobWorkDir, `aud_${i}.mp3`);
             
-            // Stage 2: Images (30%)
+            // 2. Image Stage
             await updateJobStatus(jobId, { stage: 'image', progress: 10 + Math.floor((i / scriptData.scenes.length) * 20) });
             await generateImage(scriptData.scenes[i].visual, imgPath);
             
-            // Stage 3: Audio (50%)
+            // 3. Audio Stage
             await updateJobStatus(jobId, { stage: 'audio', progress: 30 + Math.floor((i / scriptData.scenes.length) * 20) });
             await generateAudio(scriptData.scenes[i].text, audPath);
             
             sceneAssets.push({ ...scriptData.scenes[i], imgPath, audPath, index: i });
         }
 
-        // Stage 4: Rendering (70%)
+        // 4. Rendering Stage
         await updateJobStatus(jobId, { stage: 'rendering', progress: 70 });
         const sceneVideos = [];
         for (const asset of sceneAssets) {
@@ -142,11 +150,11 @@ async function processVideo(jobId, prompt, userId) {
             sceneVideos.push(sceneVideoPath);
         }
 
-        // Stage 5: Merging (85%)
+        // 5. Merging Stage
         await updateJobStatus(jobId, { stage: 'merging', progress: 85 });
         await mergeScenes(sceneVideos, finalOutputFile, jobWorkDir);
 
-        // Stage 6: Upload (95%)
+        // 6. Uploading Stage
         if (supabase) {
             await updateJobStatus(jobId, { stage: 'uploading', progress: 95 });
             const fileBuffer = await fs.readFile(finalOutputFile);
@@ -155,10 +163,11 @@ async function processVideo(jobId, prompt, userId) {
             const { error: uploadError } = await supabase.storage.from('videos').upload(fileName, fileBuffer, { contentType: 'video/mp4', upsert: true });
             if (uploadError) throw uploadError;
 
+            // Generate Public URL correctly
             const { data } = supabase.storage.from('videos').getPublicUrl(fileName);
             const publicUrl = data.publicUrl;
             
-            // Stage 7: Done (100%)
+            // 7. Done / Completed Stage
             await updateJobStatus(jobId, { 
                 status: 'completed', 
                 stage: 'done', 
@@ -166,17 +175,20 @@ async function processVideo(jobId, prompt, userId) {
                 videoUrl: publicUrl 
             });
         }
+    } catch (err) {
+        throw err;
     } finally {
         await fs.remove(jobWorkDir).catch(() => {});
     }
 }
 
-// Helpers (Spawn ffmpeg)
+// helpers
 async function renderCinematicScene(asset, outputPath) {
     const duration = asset.duration || 5;
     const args = ["-loop", "1", "-i", asset.imgPath, "-i", asset.audPath, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", "30", "-t", duration.toString(), "-c:a", "aac", "-shortest", "-y", outputPath];
     return new Promise((resolve, reject) => {
-        spawn('ffmpeg', args).on('close', (code) => code === 0 ? resolve() : reject(new Error("FFMPEG error")));
+        const proc = spawn('ffmpeg', args);
+        proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`FFMPEG error ${code}`)));
     });
 }
 
@@ -184,18 +196,19 @@ async function mergeScenes(videos, outputPath, workDir) {
     const listFile = path.resolve(workDir, 'list.txt');
     fs.writeFileSync(listFile, videos.map(v => `file '${v}'`).join('\n'));
     return new Promise((resolve, reject) => {
-        spawn('ffmpeg', ["-f", "concat", "-safe", "0", "-i", listFile, "-c", "copy", "-y", outputPath]).on('close', (code) => code === 0 ? resolve() : reject(new Error("Merge error")));
+        const proc = spawn('ffmpeg', ["-f", "concat", "-safe", "0", "-i", listFile, "-c", "copy", "-y", outputPath]);
+        proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`Merge error ${code}`)));
     });
 }
 
 async function generateVideoScript(prompt) {
-    const res = await openai.chat.completions.create({ model: "gpt-4o-mini", messages: [{ role: "system", content: "JSON: { \"scenes\": [{ \"text\": \"...\", \"visual\": \"...\", \"duration\": 5 }] }" }, { role: "user", content: prompt }], response_format: { type: "json_object" } });
+    const res = await openai.chat.completions.create({ model: "gpt-4o-mini", messages: [{ role: "system", content: "Return JSON: { \"scenes\": [{ \"text\": \"...\", \"visual\": \"...\", \"duration\": 5 }] }" }, { role: "user", content: prompt }], response_format: { type: "json_object" } });
     return JSON.parse(res.choices[0].message.content);
 }
 
 async function generateImage(visual, outputPath) {
-    const response = await openai.images.generate({ model: "dall-e-3", prompt: `Cinematic: ${visual}`, size: "1024x1792" });
-    const res = await axios.get(response.data[0].url, { responseType: 'arraybuffer' });
+    const response = await openai.images.generate({ model: "dall-e-3", prompt: `Cinematic 9:16 portrait: ${visual}`, size: "1024x1792" });
+    const res = await axios.get(response.data[0].url, { responseType: 'arraybuffer', timeout: 30000 });
     await fs.writeFile(outputPath, Buffer.from(res.data));
 }
 

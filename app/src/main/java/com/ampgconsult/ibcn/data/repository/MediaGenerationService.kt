@@ -73,6 +73,24 @@ class MediaGenerationService @Inject constructor(
         }
     }
 
+    /**
+     * Legacy compatibility wrapper for BusinessOrchestrator and DeploymentService.
+     */
+    suspend fun generateViralMedia(assetId: String, title: String, description: String): Result<ViralVideoMetadata> {
+        val result = generateAIJob("video", "$title: $description", assetId)
+        return if (result.isSuccess) {
+            val jobId = result.getOrNull() ?: ""
+            Result.success(ViralVideoMetadata(
+                id = jobId,
+                assetId = assetId,
+                status = MediaStatus.GENERATING,
+                caption = "Generating video..."
+            ))
+        } else {
+            Result.failure(result.exceptionOrNull() ?: Exception("Video generation failed"))
+        }
+    }
+
     suspend fun getJobStatus(jobId: String): JobStatusUpdate? = withContext(Dispatchers.IO) {
         try {
             val request = Request.Builder()

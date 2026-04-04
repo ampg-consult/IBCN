@@ -20,7 +20,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.ampgconsult.ibcn.data.models.ViralVideoMetadata
-import com.ampgconsult.ibcn.data.models.ViralOptimization
 import com.ampgconsult.ibcn.ui.components.VideoPlayer
 import com.ampgconsult.ibcn.ui.viewmodels.VideoStudioStatus
 import com.ampgconsult.ibcn.ui.viewmodels.AIVideoStudioViewModel
@@ -33,10 +32,10 @@ fun AIVideoStudioScreen(
 ) {
     var prompt by remember { mutableStateOf("") }
     
-    // Explicitly typed states to resolve compilation inference issues
+    // Standardizing types to resolve delegate errors
     val uiState by viewModel.uiState.collectAsState()
-    val generatedVideo: ViralVideoMetadata? by viewModel.generatedVideo.collectAsState()
-    val isListed: Boolean by viewModel.isListedInMarketplace.collectAsState()
+    val generatedVideo by viewModel.generatedVideo.collectAsState()
+    val isListed by viewModel.isListedInMarketplace.collectAsState()
 
     Scaffold(
         topBar = {
@@ -80,7 +79,6 @@ fun AIVideoStudioScreen(
                 }
             }
 
-            // Only show video workspace when completed and URL is available
             if (uiState is VideoStudioStatus.Completed) {
                 generatedVideo?.let { video ->
                     if (video.videoUrl.isNotEmpty()) {

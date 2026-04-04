@@ -1,58 +1,60 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const http = require('http');
+const { Server } = require("socket.io");
 const dns = require('node:dns');
 const { v4: uuidv4 } = require('uuid');
 
-// 📡 DEVOPS: Force IPv4 for stable cloud connections
+// DEVOPS FIX: Force IPv4 for stable cloud connections
 try { dns.setDefaultResultOrder('ipv4first'); } catch (e) {}
 
 const app = express();
+const server = http.createServer(app);
 const PORT = process.env.PORT || 8081;
 
-// Global Error Handling
+const io = new Server(server, {
+    cors: {
+        origin: "*",
+        methods: ["GET", "POST"]
+    }
+});
+
+// Global error handlers
 process.on('uncaughtException', (err) => console.error('💥 UNCAUGHT:', err));
 process.on('unhandledRejection', (reason) => console.error('💥 REJECTION:', reason));
 
 app.use(cors());
 app.use(express.json());
 
-// 🧩 SSE Clients Storage
-const clients = {};
+// 🧩 WEBSOCKET CONNECTION (Requirement)
+io.on("connection", (socket) => {
+    console.log("📡 Client connected:", socket.id);
 
-// 1. Root & Health (CRITICAL for Railway)
-app.get("/", (req, res) => res.json({ status: "IBCN Video Engine v2.0", sse: "enabled" }));
-app.get("/health", (req, res) => res.status(200).json({ status: "ok", uptime: process.uptime() }));
+    socket.on("joinJob", (jobId) => {
+        console.log(`🔗 Socket ${socket.id} joining job: ${jobId}`);
+        socket.join(jobId);
+    });
 
-// 2. 🧩 SSE Stream Endpoint
-app.get("/stream/:jobId", (req, res) => {
-    const { jobId } = req.params;
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
-    res.setHeader("Access-Control-Allow-Origin", "*");
-
-    clients[jobId] = res;
-    console.log(`📡 SSE Connected: ${jobId}`);
-
-    const heartbeat = setInterval(() => res.write(': keep-alive\n\n'), 30000);
-
-    req.on("close", () => {
-        console.log(`🔌 SSE Disconnected: ${jobId}`);
-        clearInterval(heartbeat);
-        delete clients[jobId];
+    socket.on("disconnect", () => {
+        console.log("🔌 Client disconnected:", socket.id);
     });
 });
 
-// 3. 📡 Push Update Function (Global for Worker)
+// 📡 Real-time Job Emitter (Requirement)
 global.pushUpdate = function(jobId, data) {
-    const client = clients[jobId];
-    if (client) {
-        client.write(`data: ${JSON.stringify(data)}\n\n`);
+    // Standardize Status: Replace READY with completed (Requirement)
+    if (data.status === 'READY' || data.status === 'done') {
+        data.status = 'completed';
     }
+    
+    console.log(`📤 Emitting jobUpdate to ${jobId}: ${data.stage} (${data.progress}%)`);
+    io.to(jobId).emit("jobUpdate", data);
 };
 
-// 4. Job Creation
+app.get("/", (req, res) => res.json({ status: "IBCN Video Engine v3.0", websockets: "enabled" }));
+app.get("/health", (req, res) => res.status(200).json({ status: "ok" }));
+
 app.post('/generate-video', async (req, res) => {
     const { videoQueue } = require('./queue');
     const jobId = req.body.jobId || uuidv4();
@@ -78,19 +80,17 @@ app.post('/generate-video', async (req, res) => {
     }
 });
 
-// 5. Polling Fallback / Status API
+// Keep status endpoint as fallback
 app.get('/status/:jobId', async (req, res) => {
     const { jobId } = req.params;
     try {
         const { createClient } = require('@supabase/supabase-js');
         const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
         const { data } = await supabase.from('Video_jobs').select('*').eq('id', jobId).maybeSingle();
-        
         if (!data) return res.status(404).json({ error: 'Job not found' });
-        
         res.json({
             jobId: jobId,
-            status: data.status === 'READY' ? 'completed' : data.status,
+            status: (data.status === 'READY' || data.status === 'done') ? 'completed' : data.status,
             progress: data.progress,
             stage: data.stage,
             videoUrl: data.video_url,
@@ -99,7 +99,7 @@ app.get('/status/:jobId', async (req, res) => {
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-app.listen(PORT, "0.0.0.0", () => {
-    console.log(`🚀 Server listening on ${PORT}`);
+server.listen(PORT, "0.0.0.0", () => {
+    console.log(`🚀 Server listening on ${PORT} (WebSocket Ready)`);
     require('./worker');
 });

@@ -11,101 +11,82 @@ try { dns.setDefaultResultOrder('ipv4first'); } catch (e) {}
 const app = express();
 const PORT = process.env.PORT || 8081;
 
-// 🛡️ Pre-initialize Supabase with safe defaults
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY, {
-    auth: { persistSession: false }
-});
+// Global job store for real-time status (Requirement)
+global.jobs = {};
+
+// Initialize Supabase
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
 app.use(cors());
 app.use(express.json());
 
-const clients = {};
+// Helper to update job state (Requirement)
+global.updateJob = function(jobId, updates) {
+    if (!global.jobs[jobId]) {
+        global.jobs[jobId] = {
+            status: "queued",
+            stage: "starting",
+            progress: 0,
+            videoUrl: null,
+            error: null
+        };
+    }
+    global.jobs[jobId] = { ...global.jobs[jobId], ...updates };
+    
+    // Standardize: Replace any "READY" with "completed" (Requirement)
+    if (global.jobs[jobId].status === 'READY') {
+        global.jobs[jobId].status = 'completed';
+    }
 
-app.get("/", (req, res) => res.json({ status: "IBCN Video Engine v4.2 (Production)", sse: "enabled" }));
-app.get("/health", (req, res) => res.status(200).send("OK"));
-
-app.get("/stream/:jobId", (req, res) => {
-    const { jobId } = req.params;
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
-    res.setHeader("Access-Control-Allow-Origin", "*");
-
-    clients[jobId] = res;
-    console.log(`📡 SSE: Client connected [${jobId}]`);
-
-    const heartbeat = setInterval(() => {
-        if (!res.writableEnded) res.write(': heartbeat\n\n');
-    }, 25000);
-
-    req.on("close", () => {
-        console.log(`🔌 SSE: Client disconnected [${jobId}]`);
-        clearInterval(heartbeat);
-        delete clients[jobId];
-    });
-});
-
-global.pushUpdate = function(jobId, data) {
-    const client = clients[jobId];
-    if (client && !client.writableEnded) {
-        if (data.status === 'READY' || data.status === 'done') data.status = 'completed';
-        client.write(`data: ${JSON.stringify(data)}\n\n`);
+    console.log("JOB UPDATE:", jobId, global.jobs[jobId]);
+    
+    // Also push to SSE clients if connected
+    if (global.pushUpdate) {
+        global.pushUpdate(jobId, global.jobs[jobId]);
     }
 };
 
+app.get("/", (req, res) => res.send("🚀 IBCN AI Video Engine Running"));
+app.get("/health", (req, res) => res.status(200).send("OK"));
+
+// 📡 STATUS API (Requirement)
+app.get("/status/:jobId", (req, res) => {
+    const job = global.jobs[req.params.jobId];
+    if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+    }
+    res.json(job);
+});
+
 app.post('/generate-video', async (req, res) => {
+    const { videoQueue } = require('./queue');
     const jobId = req.body.jobId || uuidv4();
-    const { prompt, userId = 'anon' } = req.body;
+    const prompt = req.body.prompt;
+    const userId = req.body.userId || 'anon';
 
     if (!prompt) return res.status(400).json({ error: "Prompt required" });
 
     try {
-        console.log(`🎬 Requesting Generation [${jobId}]: ${prompt.substring(0, 30)}...`);
-        
-        // 1. Quick initial save to DB (Timeout protected)
-        const dbPromise = supabase.from('Video_jobs').upsert({ 
+        // Initialize job in memory
+        global.updateJob(jobId, { status: 'processing', stage: 'script', progress: 10 });
+
+        // Save to Supabase for persistence
+        await supabase.from('Video_jobs').upsert({ 
             id: jobId, user_id: userId, prompt, status: 'processing', progress: 10, stage: 'script' 
         });
-        
-        const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('DB Timeout')), 5000)
-        );
 
-        await Promise.race([dbPromise, timeoutPromise]).catch(err => {
-            console.warn("⚠️ Initial DB upsert was slow or failed, continuing to queue anyway...");
-        });
-
-        // 2. Add to Queue
-        const { videoQueue } = require('./queue');
         await videoQueue.add('generate-video', { jobId, prompt, userId });
-        
         res.status(202).json({ jobId, status: 'queued' });
     } catch (error) {
-        console.error("💥 POST /generate-video Error:", error.message);
+        console.error("POST /generate-video Error:", error.message);
         res.status(500).json({ error: "Internal Server Error" });
     }
 });
 
-app.get('/status/:jobId', async (req, res) => {
-    try {
-        const { data } = await supabase.from('Video_jobs').select('*').eq('id', req.params.jobId).maybeSingle();
-        if (!data) return res.status(404).json({ error: 'Not found' });
-        res.json({
-            jobId: data.id,
-            status: (data.status === 'READY' || data.status === 'done') ? 'completed' : data.status,
-            progress: data.progress,
-            stage: data.stage,
-            videoUrl: data.video_url,
-            error: data.error
-        });
-    } catch (error) { res.status(500).json({ error: error.message }); }
-});
-
-const server = app.listen(PORT, "0.0.0.0", () => {
+app.listen(PORT, "0.0.0.0", () => {
     console.log(`🚀 API LIVE ON PORT ${PORT}`);
     require('./worker');
 });
 
-// 🛡️ Global protection against 502 causing crashes
-process.on('uncaughtException', (err) => console.error('💥 SYSTEM UNCAUGHT:', err));
-process.on('unhandledRejection', (reason) => console.error('💥 SYSTEM REJECTION:', reason));
+process.on('uncaughtException', (err) => console.error('💥 UNCAUGHT:', err));
+process.on('unhandledRejection', (reason) => console.error('💥 REJECTION:', reason));

@@ -1,8 +1,6 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const http = require('http');
-const { Server } = require("socket.io");
 const dns = require('node:dns');
 const { v4: uuidv4 } = require('uuid');
 
@@ -10,15 +8,7 @@ const { v4: uuidv4 } = require('uuid');
 try { dns.setDefaultResultOrder('ipv4first'); } catch (e) {}
 
 const app = express();
-const server = http.createServer(app);
 const PORT = process.env.PORT || 8081;
-
-const io = new Server(server, {
-    cors: {
-        origin: "*",
-        methods: ["GET", "POST"]
-    }
-});
 
 // Global error handlers
 process.on('uncaughtException', (err) => console.error('💥 UNCAUGHT:', err));
@@ -27,33 +17,52 @@ process.on('unhandledRejection', (reason) => console.error('💥 REJECTION:', re
 app.use(cors());
 app.use(express.json());
 
-// 🧩 WEBSOCKET CONNECTION (Requirement)
-io.on("connection", (socket) => {
-    console.log("📡 Client connected:", socket.id);
+// 🧩 SSE Clients storage
+const clients = {};
 
-    socket.on("joinJob", (jobId) => {
-        console.log(`🔗 Socket ${socket.id} joining job: ${jobId}`);
-        socket.join(jobId);
-    });
+// Root Route
+app.get("/", (req, res) => { 
+    res.json({ 
+        status: "IBCN Video Engine v4.0 (SSE Enabled)", 
+        endpoints: [ "/generate-video", "/status/:jobId", "/stream/:jobId" ] 
+    }); 
+});
 
-    socket.on("disconnect", () => {
-        console.log("🔌 Client disconnected:", socket.id);
+// 🧩 SSE Stream Endpoint (Passes Healthcheck + Real-time)
+app.get("/stream/:jobId", (req, res) => {
+    const { jobId } = req.params;
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+
+    clients[jobId] = res;
+    console.log(`📡 SSE Connected: ${jobId}`);
+
+    // Heartbeat every 30s to keep connection alive
+    const heartbeat = setInterval(() => res.write(': keep-alive\n\n'), 30000);
+
+    req.on("close", () => {
+        console.log(`🔌 SSE Disconnected: ${jobId}`);
+        clearInterval(heartbeat);
+        delete clients[jobId];
     });
 });
 
-// 📡 Real-time Job Emitter (Requirement)
+// 📡 Push Updates Function (Global for Worker)
 global.pushUpdate = function(jobId, data) {
-    // Standardize Status: Replace READY with completed (Requirement)
-    if (data.status === 'READY' || data.status === 'done') {
-        data.status = 'completed';
+    const client = clients[jobId];
+    if (client) {
+        // Standardize status for frontend
+        if (data.status === 'READY' || data.status === 'done') data.status = 'completed';
+        
+        console.log(`📤 Pushing SSE update to ${jobId}: ${data.stage} (${data.progress}%)`);
+        client.write(`data: ${JSON.stringify(data)}\n\n`);
     }
-    
-    console.log(`📤 Emitting jobUpdate to ${jobId}: ${data.stage} (${data.progress}%)`);
-    io.to(jobId).emit("jobUpdate", data);
 };
 
-app.get("/", (req, res) => res.json({ status: "IBCN Video Engine v3.0", websockets: "enabled" }));
-app.get("/health", (req, res) => res.status(200).json({ status: "ok" }));
+app.get('/health', (req, res) => res.status(200).json({ status: "ok" }));
 
 app.post('/generate-video', async (req, res) => {
     const { videoQueue } = require('./queue');
@@ -80,7 +89,6 @@ app.post('/generate-video', async (req, res) => {
     }
 });
 
-// Keep status endpoint as fallback
 app.get('/status/:jobId', async (req, res) => {
     const { jobId } = req.params;
     try {
@@ -99,7 +107,7 @@ app.get('/status/:jobId', async (req, res) => {
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-server.listen(PORT, "0.0.0.0", () => {
-    console.log(`🚀 Server listening on ${PORT} (WebSocket Ready)`);
+app.listen(PORT, "0.0.0.0", () => {
+    console.log(`🚀 Server listening on ${PORT} (SSE Enabled)`);
     require('./worker');
 });

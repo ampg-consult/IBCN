@@ -2,8 +2,8 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const dns = require('node:dns');
+const { v4: uuidv4 } = require('uuid');
 
-// DEVOPS FIX: Force IPv4 to prevent cloud connection errors
 try { dns.setDefaultResultOrder('ipv4first'); } catch (e) {}
 
 const app = express();
@@ -12,112 +12,55 @@ const PORT = process.env.PORT || 8081;
 process.on('uncaughtException', (err) => console.error('💥 UNCAUGHT EXCEPTION:', err));
 process.on('unhandledRejection', (reason) => console.error('💥 UNHANDLED REJECTION:', reason));
 
-app.use(cors({ origin: "*" }));
+app.use(cors());
 app.use(express.json());
 
-let supabase;
-let redis;
+const clients = {};
 
-try {
-    const { createClient } = require('@supabase/supabase-js');
-    const Redis = require('ioredis');
-    
-    if (process.env.SUPABASE_URL && process.env.SUPABASE_KEY) {
-        supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
-        console.log("✅ Supabase Initialized");
-    }
-    if (process.env.REDIS_URL) {
-        redis = new Redis(process.env.REDIS_URL, { maxRetriesPerRequest: null });
-        console.log("✅ Redis Initialized");
-    }
-} catch (e) {
-    console.error("Client Init Error:", e.message);
-}
+app.get("/", (req, res) => { 
+    res.json({ status: "IBCN Video Engine v2.0 (SSE Enabled)", endpoints: ["/generate-video", "/status/:jobId", "/stream/:jobId"] }); 
+});
 
-app.get('/health', (req, res) => res.status(200).json({ status: "ok", redis: !!redis, supabase: !!supabase }));
-app.get('/', (req, res) => res.json({ status: "IBCN Video Engine Live", version: "1.4" }));
+// 🧩 SSE Stream Endpoint
+app.get("/stream/:jobId", (req, res) => {
+    const { jobId } = req.params;
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+
+    clients[jobId] = res;
+    console.log(`📡 SSE Connected: ${jobId}`);
+
+    const heartbeat = setInterval(() => res.write(': keep-alive\n\n'), 30000);
+
+    req.on("close", () => {
+        console.log(`🔌 SSE Disconnected: ${jobId}`);
+        clearInterval(heartbeat);
+        delete clients[jobId];
+    });
+});
+
+global.pushUpdate = function(jobId, data) {
+    const client = clients[jobId];
+    if (client) {
+        client.write(`data: ${JSON.stringify(data)}\n\n`);
+    }
+};
 
 app.post('/generate-video', async (req, res) => {
     const { videoQueue } = require('./queue');
-    const { prompt, userId, jobId: requestedJobId } = req.body;
-    
-    if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
-    
-    const jobId = requestedJobId || require('uuid').v4();
-    const uid = userId || 'anonymous';
-    
+    const jobId = req.body.jobId || uuidv4();
     try {
-        const initialData = {
-            id: jobId,
-            user_id: uid,
-            prompt,
-            status: 'queued',
-            progress: 0,
-            stage: 'queued',
-            created_at: new Date().toISOString()
-        };
-
-        if (supabase) await supabase.from('Video_jobs').upsert(initialData);
-        if (redis) {
-            await redis.set(`job:${jobId}`, JSON.stringify({
-                status: 'queued',
-                progress: 0,
-                stage: 'queued',
-                videoUrl: null
-            }), 'EX', 3600);
-        }
-
-        await videoQueue.add('generate-video', { jobId, prompt, userId: uid, type: 'video' });
+        const { createClient } = require('@supabase/supabase-js');
+        const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+        await supabase.from('Video_jobs').upsert({ id: jobId, user_id: req.body.userId || 'anon', prompt: req.body.prompt, status: 'queued', progress: 0 });
+        await videoQueue.add('generate-video', { jobId, prompt: req.body.prompt, userId: req.body.userId });
         res.status(202).json({ jobId, status: 'queued' });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-app.get('/status/:jobId', async (req, res) => {
-    const { jobId } = req.params;
-    try {
-        let job;
-        if (redis) {
-            const cached = await redis.get(`job:${jobId}`);
-            if (cached) job = JSON.parse(cached);
-        }
-        
-        if (!job && supabase) {
-            const { data } = await supabase.from('Video_jobs').select('*').eq('id', jobId).maybeSingle();
-            if (data) {
-                job = {
-                    status: data.status,
-                    stage: data.stage,
-                    progress: data.progress,
-                    videoUrl: data.video_url || data.videoUrl,
-                    error: data.error
-                };
-            }
-        }
-        
-        if (!job) return res.status(404).json({ error: 'Job not found' });
-        
-        // STANDARDIZE STATUS (STEP 1 & 3)
-        let status = job.status?.toLowerCase();
-        if (status === 'ready' || status === 'done' || status === 'success') {
-            status = 'completed';
-        }
-
-        res.json({
-            jobId: jobId,
-            status: status || 'processing',
-            progress: job.progress || 0,
-            stage: job.stage || 'working',
-            videoUrl: status === 'completed' ? job.videoUrl : null,
-            error: status === 'failed' ? job.error : null
-        });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
+    } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 app.listen(PORT, "0.0.0.0", () => {
-    console.log(`🚀 IBCN AI ENGINE ACTIVE ON PORT ${PORT}`);
+    console.log(`🚀 Server listening on ${PORT}`);
     require('./worker');
 });

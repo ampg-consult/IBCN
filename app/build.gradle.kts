@@ -70,6 +70,9 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.4.1")
     implementation("androidx.media3:media3-common:1.4.1")
 
+    // SSE Support
+    implementation("com.squareup.okhttp3:okhttp-sse:4.12.0")
+
     // Jetpack Navigation
     implementation(libs.androidx.navigation.compose)
     

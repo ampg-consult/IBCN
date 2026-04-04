@@ -11,10 +11,7 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -45,20 +42,15 @@ class AIVideoStudioViewModel @Inject constructor(
     private val _isListedInMarketplace = MutableStateFlow(false)
     val isListedInMarketplace: StateFlow<Boolean> = _isListedInMarketplace.asStateFlow()
 
-    private var pollingJob: Job? = null
+    private var observerJob: Job? = null
 
     fun generateVideo(prompt: String) {
         viewModelScope.launch {
-            // INITIAL STATE (Requirement: 10% Script)
             _uiState.value = VideoStudioStatus.Generating("Generating script...", 10)
             _isListedInMarketplace.value = false
             
             val assetId = "custom_video_${System.currentTimeMillis()}"
-            val result = mediaGenerationService.generateAIJob(
-                type = "video",
-                prompt = prompt,
-                assetId = assetId
-            )
+            val result = mediaGenerationService.generateAIJob("video", prompt, assetId)
 
             result.onSuccess { jobId ->
                 val initialMedia = ViralVideoMetadata(
@@ -68,48 +60,39 @@ class AIVideoStudioViewModel @Inject constructor(
                     caption = "Initializing..."
                 )
                 _generatedVideo.value = initialMedia
-                pollJob(jobId, assetId)
+                startRealTimeObservation(jobId, assetId)
             }.onFailure { error ->
                 _uiState.value = VideoStudioStatus.Error(error.message ?: "Failed to start generation")
             }
         }
     }
 
-    private fun pollJob(jobId: String, assetId: String) {
-        pollingJob?.cancel()
-        pollingJob = viewModelScope.launch {
-            while (true) {
-                delay(2000) // Poll every 2 seconds as requested
-                val response = mediaGenerationService.getJobStatus(jobId)
-                
-                if (response == null) continue
-
-                Log.d("VIDEO_STATUS", response.toString())
-
-                when (response.status?.lowercase()) {
-                    "completed" -> {
-                        val videoUrl = response.videoUrl ?: ""
+    private fun startRealTimeObservation(jobId: String, assetId: String) {
+        observerJob?.cancel()
+        observerJob = viewModelScope.launch {
+            mediaGenerationService.observeJob(jobId)
+                .onEach { update ->
+                    Log.d("VIDEO_STATUS", "SSE Update: $update")
+                    
+                    val status = update.status.lowercase()
+                    if (status == "completed") {
+                        val videoUrl = update.videoUrl ?: ""
                         if (videoUrl.isNotEmpty()) {
-                            val finalMedia = ViralVideoMetadata(
-                                id = jobId,
-                                assetId = assetId,
-                                videoUrl = videoUrl,
+                            val finalMedia = _generatedVideo.value?.copy(
                                 status = MediaStatus.READY,
+                                videoUrl = videoUrl,
                                 caption = "Completed 🎬"
-                            )
+                            ) ?: ViralVideoMetadata(id = jobId, assetId = assetId, videoUrl = videoUrl, status = MediaStatus.READY)
+                            
                             _generatedVideo.value = finalMedia
                             _uiState.value = VideoStudioStatus.Completed
                             mediaGenerationService.saveMediaToFirestore(finalMedia)
-                            break // Stop polling
+                            checkMarketplaceListing()
                         }
-                    }
-                    "failed" -> {
-                        _uiState.value = VideoStudioStatus.Error(response.error ?: "Generation failed")
-                        break // Stop polling
-                    }
-                    else -> {
-                        // DYNAMIC STAGE MAPPING
-                        val displayStatusText = when (response.stage?.lowercase()) {
+                    } else if (status == "failed") {
+                        _uiState.value = VideoStudioStatus.Error(update.error ?: "Generation failed")
+                    } else {
+                        val displayStatusText = when (update.stage.lowercase()) {
                             "script" -> "Generating script..."
                             "image" -> "Creating visuals..."
                             "audio" -> "Generating voice..."
@@ -119,11 +102,27 @@ class AIVideoStudioViewModel @Inject constructor(
                             "done" -> "Completed 🎬"
                             else -> "Processing..."
                         }
-                        _uiState.value = VideoStudioStatus.Generating(displayStatusText, response.progress)
+                        _uiState.value = VideoStudioStatus.Generating(displayStatusText, update.progress)
                     }
                 }
-            }
+                .catch { e -> 
+                    _uiState.value = VideoStudioStatus.Error("Connection lost: ${e.message}")
+                }
+                .collect()
         }
+    }
+
+    private fun checkMarketplaceListing() {
+        val video = _generatedVideo.value ?: return
+        if (video.videoUrl.isEmpty()) return
+        
+        firestore.collection("marketplace_assets")
+            .whereEqualTo("assetUrl", video.videoUrl)
+            .addSnapshotListener { snapshot, _ ->
+                if (snapshot != null && !snapshot.isEmpty) {
+                    _isListedInMarketplace.value = true
+                }
+            }
     }
 
     fun makeViral() {
@@ -146,8 +145,10 @@ class AIVideoStudioViewModel @Inject constructor(
         }
     }
 
+    fun sellVideo() { }
+
     override fun onCleared() {
-        pollingJob?.cancel()
+        observerJob?.cancel()
         super.onCleared()
     }
 }

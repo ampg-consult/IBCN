@@ -6,7 +6,6 @@ import com.ampgconsult.ibcn.data.models.InvestorInsight
 import com.ampgconsult.ibcn.data.models.LaunchpadConfig
 import com.ampgconsult.ibcn.data.models.MediaStatus
 import com.ampgconsult.ibcn.data.models.StartupProject
-import com.ampgconsult.ibcn.data.models.ViralVideoMetadata
 import com.ampgconsult.ibcn.data.repository.MediaGenerationService
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
@@ -14,6 +13,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import java.util.UUID
 import javax.inject.Inject
 
 data class LaunchpadUiState(
@@ -75,24 +75,15 @@ class StartupLaunchpadViewModel @Inject constructor(
     fun startLaunchpadJob(prompt: String) {
         _uiState.update { it.copy(isGenerating = true, error = null, progress = 0, stage = "Initializing Launchpad...") }
         viewModelScope.launch {
-            val jobId = java.util.UUID.randomUUID().toString()
-            val userId = "user_id_placeholder" 
+            val jobId = UUID.randomUUID().toString()
+            val result = mediaService.generateAIJob("launchpad", prompt, jobId)
             
-            val success = triggerLaunchpadBackend(userId, jobId, prompt)
-            
-            if (success) {
+            if (result.isSuccess) {
                 pollForJobStatus(jobId)
             } else {
-                _uiState.update { it.copy(isGenerating = false, error = "Failed to start AI Launchpad") }
+                _uiState.update { it.copy(isGenerating = false, error = "Failed to start AI Launchpad: ${result.exceptionOrNull()?.message}") }
             }
         }
-    }
-
-    private suspend fun triggerLaunchpadBackend(userId: String, jobId: String, prompt: String): Boolean {
-        return try {
-            val result = mediaService.generateAIJob("launchpad", prompt, jobId)
-            result.isSuccess
-        } catch (e: Exception) { false }
     }
 
     private fun pollForJobStatus(jobId: String) {
@@ -117,7 +108,7 @@ class StartupLaunchpadViewModel @Inject constructor(
                     ) }
                     isPolling = false
                 } else if (statusUpdate.status == "failed") {
-                    _uiState.update { it.copy(isGenerating = false, error = statusUpdate.error) }
+                    _uiState.update { it.copy(isGenerating = false, error = statusUpdate.error ?: "Generation failed") }
                     isPolling = false
                 }
             }

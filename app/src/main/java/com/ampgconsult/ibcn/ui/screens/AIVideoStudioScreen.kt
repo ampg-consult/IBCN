@@ -114,7 +114,7 @@ fun StatusPanel(state: VideoStudioStatus) {
                 is VideoStudioStatus.Generating -> {
                     // UPGRADED: Real-time progress bar
                     LinearProgressIndicator(
-                        progress = state.progress / 100f,
+                        progress = { state.progress / 100f },
                         modifier = Modifier.fillMaxWidth().clip(CircleShape)
                     )
                     Spacer(Modifier.height(12.dp))
@@ -187,8 +187,19 @@ fun VideoPreviewWorkspace(videoUrl: String, title: String, isListed: Boolean, on
             Column(modifier = Modifier.padding(20.dp)) {
                 Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(12.dp))
-                Button(onClick = onMakeViral, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF4081))) {
-                    Icon(Icons.Default.TrendingUp, null); Spacer(Modifier.width(8.dp)); Text("Optimize for Virality")
+                
+                if (isListed) {
+                    Surface(color = Color(0xFFE8F5E9), shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Verified, contentDescription = null, tint = Color(0xFF2E7D32))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Listed in Marketplace ✅", color = Color(0xFF2E7D32), fontWeight = FontWeight.Bold)
+                        }
+                    }
+                } else {
+                    Button(onClick = onMakeViral, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF4081))) {
+                        Icon(Icons.Default.TrendingUp, null); Spacer(Modifier.width(8.dp)); Text("Optimize for Virality")
+                    }
                 }
             }
         }

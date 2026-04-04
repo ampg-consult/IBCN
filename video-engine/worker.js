@@ -1,10 +1,8 @@
 require('dotenv').config();
 const dns = require('node:dns');
 
-// 1. DNS FIX: Force IPv4 to prevent "Connection error" in cloud containers
 try {
     dns.setDefaultResultOrder('ipv4first');
-    console.log("📡 DNS: IPv4 Priority Enabled");
 } catch (e) {}
 
 const { Worker } = require('bullmq');
@@ -17,17 +15,14 @@ const axios = require('axios');
 const Redis = require('ioredis');
 const { connection } = require('./queue');
 
-console.log("🛠️ WORKER MODULE STARTING...");
+console.log("🛠️ WORKER MODULE LOADING...");
 
-// 2. Initialize OpenAI with strict config
 let openai;
 if (process.env.OPENAI_API_KEY) {
     openai = new OpenAI({ 
         apiKey: process.env.OPENAI_API_KEY,
-        timeout: 30000, // 30s timeout
-        maxRetries: 2
+        timeout: 45000
     });
-    console.log("✅ OpenAI Initialized");
 }
 
 const statusRedis = process.env.REDIS_URL ? new Redis(process.env.REDIS_URL) : null;
@@ -42,95 +37,83 @@ async function updateJobStatus(jobId, updateData) {
     const stage = updateData.stage || 'working';
     const progress = updateData.progress || 0;
     const videoUrl = updateData.videoUrl || null;
+    const error = updateData.error || null;
 
-    console.log(`[JOB ${jobId}] Stage: ${stage} | Progress: ${progress}% | Status: ${status}`);
+    const payload = { status, stage, progress, videoUrl, error, updated_at: new Date().toISOString() };
 
-    const payload = { status, stage, progress, videoUrl, updated_at: new Date().toISOString() };
-
+    // 1. Update Persistent Stores
     if (statusRedis) await statusRedis.set(`job:${jobId}`, JSON.stringify(payload), 'EX', 3600).catch(console.error);
     if (supabase) await supabase.from(JOBS_TABLE).update({
-        status, stage, progress, video_url: videoUrl, updated_at: payload.updated_at
+        status, stage, progress, video_url: videoUrl, error, updated_at: payload.updated_at
     }).eq('id', jobId).catch(console.error);
+
+    // 2. PUSH REAL-TIME SSE UPDATE (SENIOR DEVOPS UPGRADE)
+    if (global.pushUpdate) {
+        global.pushUpdate(jobId, payload);
+    }
 }
 
-// 3. THE WORKER
 const worker = new Worker('video-generation', async job => {
-    const { jobId, prompt, type } = job.data;
-    console.log(`🚀 PROCESSING JOB: ${jobId} (${type})`);
+    const { jobId, prompt } = job.data;
+    console.log(`🚀 PROCESSING: ${jobId}`);
 
     try {
-        if (!openai) throw new Error("OpenAI Key Missing");
-        
-        await fs.ensureDir(path.resolve(TEMP_DIR, jobId));
+        const workDir = path.resolve(TEMP_DIR, jobId);
+        await fs.ensureDir(workDir);
         await fs.ensureDir(OUTPUT_DIR);
 
-        // --- STAGE 1: SCRIPT ---
+        // --- STAGE 1: SCRIPT (15%) ---
         await updateJobStatus(jobId, { stage: 'script', progress: 15 });
-        console.log(`[${jobId}] Calling OpenAI GPT-4o-mini...`);
-        
-        const scriptResponse = await openai.chat.completions.create({
+        const scriptRes = await openai.chat.completions.create({
             model: "gpt-4o-mini",
-            messages: [
-                { role: "system", content: "You are a viral video director. Return JSON: { \"scenes\": [{ \"text\": \"Short narration\", \"visual\": \"DALL-E prompt\" }] }" },
-                { role: "user", content: prompt }
-            ],
+            messages: [{ role: "user", content: `Video prompt: ${prompt}. Return JSON: { "scenes": [{"text": "narration", "visual": "dalle_prompt"}] }` }],
             response_format: { type: "json_object" }
         });
+        const scriptData = JSON.parse(scriptRes.choices[0].message.content);
 
-        const scriptData = JSON.parse(scriptResponse.choices[0].message.content);
-        console.log(`[${jobId}] Script Generated: ${scriptData.scenes.length} scenes`);
-
-        // --- STAGE 2: ASSETS (Images & Audio) ---
+        // --- STAGE 2: ASSETS (50%) ---
         const sceneAssets = [];
-        for (let i = 0; i < scriptData.scenes.length; i++) {
-            const progress = 20 + Math.floor((i / scriptData.scenes.length) * 40);
-            await updateJobStatus(jobId, { stage: 'image', progress });
-            
-            const imgPath = path.resolve(TEMP_DIR, jobId, `img_${i}.png`);
-            const audPath = path.resolve(TEMP_DIR, jobId, `aud_${i}.mp3`);
-
-            console.log(`[${jobId}] Generating Image ${i+1}/${scriptData.scenes.length}...`);
-            const imgResult = await openai.images.generate({ model: "dall-e-3", prompt: scriptData.scenes[i].visual, size: "1024x1792" });
-            const imgBuffer = await axios.get(imgResult.data[0].url, { responseType: 'arraybuffer' });
+        for (let i = 0; i < Math.min(scriptData.scenes.length, 3); i++) {
+            await updateJobStatus(jobId, { stage: 'image', progress: 20 + (i * 10) });
+            const imgRes = await openai.images.generate({ model: "dall-e-3", prompt: scriptData.scenes[i].visual });
+            const imgPath = path.resolve(workDir, `img_${i}.png`);
+            const imgBuffer = await axios.get(imgRes.data[0].url, { responseType: 'arraybuffer' });
             await fs.writeFile(imgPath, Buffer.from(imgBuffer.data));
 
-            console.log(`[${jobId}] Generating Audio ${i+1}/${scriptData.scenes.length}...`);
+            await updateJobStatus(jobId, { stage: 'audio', progress: 25 + (i * 10) });
             const mp3 = await openai.audio.speech.create({ model: "tts-1", voice: "onyx", input: scriptData.scenes[i].text });
+            const audPath = path.resolve(workDir, `aud_${i}.mp3`);
             await fs.writeFile(audPath, Buffer.from(await mp3.arrayBuffer()));
-
+            
             sceneAssets.push({ imgPath, audPath });
         }
 
-        // --- STAGE 3: RENDERING ---
-        await updateJobStatus(jobId, { stage: 'rendering', progress: 70 });
+        // --- STAGE 3: RENDERING (80%) ---
+        await updateJobStatus(jobId, { stage: 'rendering', progress: 80 });
         const finalFile = path.resolve(OUTPUT_DIR, `${jobId}.mp4`);
-        
-        // Simplified Rendering for speed
         await new Promise((resolve, reject) => {
-            const args = ["-loop", "1", "-i", sceneAssets[0].imgPath, "-i", sceneAssets[0].audPath, "-c:v", "libx264", "-t", "5", "-y", finalFile];
-            spawn('ffmpeg', args).on('close', code => code === 0 ? resolve() : reject(new Error("FFMPEG fail")));
+            const args = ["-loop", "1", "-i", sceneAssets[0].imgPath, "-i", sceneAssets[0].audPath, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-t", "5", "-y", finalFile];
+            spawn('ffmpeg', args).on('close', code => code === 0 ? resolve() : reject(new Error("FFMPEG error")));
         });
 
-        // --- STAGE 4: UPLOAD ---
-        await updateJobStatus(jobId, { stage: 'uploading', progress: 90 });
+        // --- STAGE 4: UPLOAD (95%) ---
+        await updateJobStatus(jobId, { stage: 'uploading', progress: 95 });
         const fileBuffer = await fs.readFile(finalFile);
         const fileName = `video_${jobId}.mp4`;
         await supabase.storage.from('videos').upload(fileName, fileBuffer, { contentType: 'video/mp4', upsert: true });
-        
         const { data } = supabase.storage.from('videos').getPublicUrl(fileName);
-        
+
+        // --- FINAL: COMPLETE (100%) ---
         await updateJobStatus(jobId, { 
             status: 'completed', stage: 'done', progress: 100, videoUrl: data.publicUrl 
         });
-        
-        console.log(`✨ JOB COMPLETED: ${jobId}`);
 
     } catch (err) {
-        console.error(`💥 FATAL ERROR [${jobId}]:`, err.message);
+        console.error(`💥 ERROR:`, err.message);
         await updateJobStatus(jobId, { status: "failed", error: err.message });
     } finally {
         await fs.remove(path.resolve(TEMP_DIR, jobId)).catch(() => {});
     }
 }, { connection, concurrency: 1 });
 
-console.log("🚀 WORKER ACTIVE");
+console.log("🚀 WORKER READY");

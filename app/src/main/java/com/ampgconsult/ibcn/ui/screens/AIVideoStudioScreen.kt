@@ -4,8 +4,6 @@ import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -21,7 +19,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.ampgconsult.ibcn.data.models.SocialPlatform
+import com.ampgconsult.ibcn.data.models.ViralVideoMetadata
 import com.ampgconsult.ibcn.data.models.ViralOptimization
 import com.ampgconsult.ibcn.ui.components.VideoPlayer
 import com.ampgconsult.ibcn.ui.viewmodels.VideoStudioStatus
@@ -34,10 +32,11 @@ fun AIVideoStudioScreen(
     viewModel: AIVideoStudioViewModel = hiltViewModel()
 ) {
     var prompt by remember { mutableStateOf("") }
+    
+    // Explicitly typed states to resolve compilation inference issues
     val uiState by viewModel.uiState.collectAsState()
-    val generatedVideo by viewModel.generatedVideo.collectAsState()
-    val optimizationState by viewModel.viralOptimization.collectAsState()
-    val isListed by viewModel.isListedInMarketplace.collectAsState()
+    val generatedVideo: ViralVideoMetadata? by viewModel.generatedVideo.collectAsState()
+    val isListed: Boolean by viewModel.isListedInMarketplace.collectAsState()
 
     Scaffold(
         topBar = {
@@ -81,17 +80,20 @@ fun AIVideoStudioScreen(
                 }
             }
 
-            generatedVideo?.let { video ->
-                if (video.videoUrl.isNotEmpty() && (uiState is VideoStudioStatus.Completed)) {
-                    item {
-                        VideoPreviewWorkspace(
-                            videoUrl = video.videoUrl,
-                            title = video.script.hook.ifEmpty { "Your AI Masterpiece" },
-                            isListed = isListed,
-                            onDownload = { },
-                            onSell = { viewModel.sellVideo() },
-                            onMakeViral = { viewModel.makeViral() }
-                        )
+            // Only show video workspace when completed and URL is available
+            if (uiState is VideoStudioStatus.Completed) {
+                generatedVideo?.let { video ->
+                    if (video.videoUrl.isNotEmpty()) {
+                        item {
+                            VideoPreviewWorkspace(
+                                videoUrl = video.videoUrl,
+                                title = video.caption.ifEmpty { "Your AI Masterpiece" },
+                                isListed = isListed,
+                                onDownload = { },
+                                onSell = { viewModel.sellVideo() },
+                                onMakeViral = { viewModel.makeViral() }
+                            )
+                        }
                     }
                 }
             }
@@ -112,9 +114,8 @@ fun StatusPanel(state: VideoStudioStatus) {
         ) {
             when (state) {
                 is VideoStudioStatus.Generating -> {
-                    // UPGRADED: Real-time progress bar
                     LinearProgressIndicator(
-                        progress = { state.progress / 100f },
+                        progress = state.progress / 100f,
                         modifier = Modifier.fillMaxWidth().clip(CircleShape)
                     )
                     Spacer(Modifier.height(12.dp))
